@@ -96,7 +96,7 @@ public class MainController {
             try {
                 if (minecraftDownloader.checkUpdates("1.20.1"))
                     updateNeeded.add(UpdateNeeded.MINECRAFT);
-                if (fabricDownloader.checkUpdates("1.20.1-fabric-0.16.10"))
+                if (fabricDownloader.checkUpdates("1.20.1-fabric-0.19.1"))
                     updateNeeded.add(UpdateNeeded.FABRIC);
                 if (httpSync.checkUpdates("")) 
                     updateNeeded.add(UpdateNeeded.HTTPSYNC);
@@ -129,7 +129,7 @@ public class MainController {
                 if (updateNeeded.contains(UpdateNeeded.MINECRAFT))
                     minecraftDownloader.download("1.20.1");
                 if (updateNeeded.contains(UpdateNeeded.FABRIC))
-                    fabricDownloader.download("1.20.1-fabric-0.16.10");
+                    fabricDownloader.download("1.20.1-fabric-0.19.1");
                 if (updateNeeded.contains(UpdateNeeded.HTTPSYNC))
                     httpSync.download("");
                 
@@ -192,7 +192,7 @@ public class MainController {
                     minecraftLauncher.userName = config.username;
                     Loader loader = new Loader(minecraftLauncher);
                     loader.loadFull("1.20.1");
-                    loader.loadPatch("1.20.1-fabric-0.16.10");
+                    loader.loadPatch("1.20.1-fabric-0.19.1");
                     minecraftLauncher.launch();
                 } catch (Exception exc) {
                     exc.printStackTrace();
