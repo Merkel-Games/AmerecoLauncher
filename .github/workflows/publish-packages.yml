@@ -10,11 +10,23 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            ext: deb
+            ext: |
+              target/AmerecoLauncher*.deb
+              target/AmerecoLauncher*.rpm
+              target/AmerecoLauncher*.AppImage
           - os: windows-latest
-            ext: exe
+            ext: |
+              target/AmerecoLauncher*.exe
+              target/AmerecoLauncher*.msi
+              target/AmerecoLauncher*.msm
           - os: macos-latest
-            ext: pkg
+            ext: |
+              target/AmerecoLauncher*.pkg
+              target/AmerecoLauncher*.dmg
+          - os: macos-latest-large
+            ext: |
+              target/AmerecoLauncher*.pkg
+              target/AmerecoLauncher*.dmg
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -39,7 +51,7 @@ jobs:
         with:
           if-no-files-found: error
           name: AmerecoLauncher_${{ runner.os }}-${{ runner.arch }}.${{ matrix.ext }}
-          path: target/AmerecoLauncher*.${{ matrix.ext }}
+          path: ${{ matrix.ext }}
           
   build-jar:
     runs-on: ubuntu-latest
@@ -79,7 +91,11 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: AmerecoLauncher*/AmerecoLauncher*
+          files: |
+            AmerecoLauncher*/AmerecoLauncher*.deb
+            AmerecoLauncher*/AmerecoLauncher*.exe
+            AmerecoLauncher*/AmerecoLauncher*.pkg
+            AmerecoLauncher*/AmerecoLauncher*.jar
           tag_name: ${{ github.ref_name }}
 #          body: "Automated release of ${{ github.ref_name }}."
         env:
