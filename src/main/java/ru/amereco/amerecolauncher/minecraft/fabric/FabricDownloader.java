@@ -60,6 +60,7 @@ public class FabricDownloader extends Downloader {
     
     public Version metaToVersion(FabricMeta fabricMeta) {
         Version version = new Version(
+            null,
             null, 
             null, 
             new ArrayList(), 

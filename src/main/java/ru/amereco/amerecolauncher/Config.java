@@ -8,6 +8,7 @@ import dev.dirs.ProjectDirectories;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 
 public class Config {
 
@@ -23,18 +24,26 @@ public class Config {
     @Expose
     public String mainDir;
     @Expose
-    public String username;
+    public String accessToken;
+    @Expose
+    public String clientId;
     @Expose
     public String javaDir;
     @Expose
     public int downloadThreadsCount;
+    @Expose
+    public String uuid;
+    @Expose
+    public String authlibApiUrl;
 
     private Config() {
         // Значения по умолчанию
         this.mainDir = Path.of(projectDir.dataLocalDir, ".minceraft").toString();
-        this.username = null;
+        this.accessToken = null;
+        this.clientId = UUID.randomUUID().toString().replace("-", "");
         this.javaDir = System.getProperty("java.home");
         this.downloadThreadsCount = Runtime.getRuntime().availableProcessors();
+        this.authlibApiUrl = "https://amereco.ru/wp-json/authlib-api/v1/yggdrasil/";
     }
 
     public static Config get() {

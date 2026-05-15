@@ -3,6 +3,8 @@ package ru.amereco.amerecolauncher.minecraft;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.*;
 import ru.amereco.amerecolauncher.Config;
 
@@ -28,7 +30,8 @@ public class MinecraftLauncher {
     public Path nativesDir;
     public String uuid;
     public String accessToken;
-    public List<String> additionalArguments = new ArrayList<>();
+    public List<String> gameArguments = new ArrayList<>();
+    public List<String> jvmArguments = new ArrayList<>();
 
     public MinecraftLauncher(String executable, List<Path> classPaths, String mainClass,
             Path assetsDir, String assetIndex, Path gameDir, Path nativesDir) {
@@ -46,28 +49,58 @@ public class MinecraftLauncher {
         this.gameDir = gameDir.toAbsolutePath();
     }
 
+    private List<String> getArgumentsString(List<String> arguments, Map<String, String> subtitutes) {
+        List<String> result = new ArrayList<>();
+        String keysPattern = subtitutes.keySet().stream()
+            .map(Pattern::quote)
+            .collect(Collectors.joining("|"));
+        Pattern re = Pattern.compile("\\${(" + keysPattern + ")}");
+        for (int i=0; i<arguments.size(); i++) {
+            Matcher m1 = re.matcher(arguments.get(i));
+            if (m1.find() && m1.start() > 0) {
+                String key = m1.group(1);
+                result.add(arguments.get(i).replace(key, subtitutes.get(key)));
+            } else if (i+1 < arguments.size()) {
+                Matcher m2 = re.matcher(arguments.get(i+1));
+                if (m2.matches()) {
+                    result.add(arguments.get(i));
+                    result.add(subtitutes.get(m2.group(1)));
+                }
+            }
+        }
+        return result;
+    }
+
     public void launch() throws IOException, InterruptedException {
+        Properties props = new Properties();
+        props.load(getClass().getClassLoader().getResourceAsStream("application.properties"));
+
+        Map<String, String> subtitutes = new HashMap<>();
+        subtitutes.put("classpath", classPaths.stream()
+                                    .map(Path::toString)
+                                    .map((p) -> "\""+p+"\"")
+                                    .collect(Collectors.joining(File.pathSeparator)));
+        subtitutes.put("auth_player_name", userName);
+        subtitutes.put("user_type", userType);
+        subtitutes.put("version_name", version);
+        subtitutes.put("version_type", versionType);
+        subtitutes.put("assets_root", assetsDir.toString());
+        subtitutes.put("assets_index_name", assetIndex);
+        subtitutes.put("game_directory", gameDir.toString());
+        subtitutes.put("natives_directory", nativesDir.toString());
+        subtitutes.put("auth_uuid", uuid);
+        subtitutes.put("auth_access_token", accessToken);
+        // subtitutes.put("clientid", clientId);
+        subtitutes.put("clientid", "sssssss");
+        subtitutes.put("launcher_name", props.getProperty("name"));
+        subtitutes.put("launcher_version", props.getProperty("version"));
+
         List<String> command = new ArrayList<>();
         command.add(executable);
-        command.add("-Djava.library.path=" + nativesDir);
-        command.add("-Dminecraft.launcher.brand=amereco-launcher");
-        command.add("-Dminecraft.launcher.version=1.0");
-        command.add("-cp");
-        command.add(classPaths.stream()
-                .map(Path::toString)
-//                .map((p) -> "\""+p+"\"")
-                .collect(Collectors.joining(File.pathSeparator)));
+        command.addAll(getArgumentsString(jvmArguments, subtitutes));
         command.add(mainClass);
-        command.add("--version"); command.add(version);
-        command.add("--versionType"); command.add(versionType);
-        command.add("--gameDir"); command.add(gameDir.toString());
-        command.add("--assetsDir"); command.add(assetsDir.toString());
-        command.add("--assetIndex"); command.add(assetIndex);
-        command.add("--username"); command.add(userName);
-        command.add("--userType"); command.add(userType);
-        // command.add("--uuid"); command.add(uuid);
-        // command.add("--accessToken"); command.add(accessToken);
-
+        command.addAll(getArgumentsString(gameArguments, subtitutes));
+        
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(new File(gameDir.toString()));
 

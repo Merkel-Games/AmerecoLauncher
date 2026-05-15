@@ -6,7 +6,6 @@ package ru.amereco.amerecolauncher.minecraft.models;
 
 import com.google.gson.annotations.SerializedName;
 import java.util.Map;
-import org.apache.commons.exec.OS;
 
 /**
  *

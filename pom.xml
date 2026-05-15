@@ -4,6 +4,7 @@
     <groupId>ru.amereco</groupId>
     <artifactId>AmerecoLauncher</artifactId>
     <version>1.0.0</version>
+    <name>Amereco Launcher</name>
     <organization>
         <name>Amereco Minecraft Server</name>
         <url>https://amereco.ru</url>
@@ -205,20 +206,14 @@
                     <groupId>org.openjfx</groupId>
                     <artifactId>javafx-graphics</artifactId>
                     <version>${javafx.version}</version>
+                    <classifier>mac</classifier>
+                </dependency>
+                <dependency>
+                    <groupId>org.openjfx</groupId>
+                    <artifactId>javafx-graphics</artifactId>
+                    <version>${javafx.version}</version>
                     <classifier>mac-aarch64</classifier>
                 </dependency>
-<!--            <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-graphics</artifactId>
-                    <version>${javafx.version}</version>
-                    <classifier>linux-aarch64</classifier>
-                </dependency>-->
-<!--            <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-graphics</artifactId>
-                    <version>${javafx.version}</version>
-                    <classifier>mac</classifier>
-                </dependency>-->
             </dependencies>
             <build>
                 <plugins>
@@ -237,6 +232,8 @@
                                         <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                             <mainClass>${mainClass}</mainClass>
                                         </transformer>
+                                        <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                        <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer"/>
                                     </transformers>
                                 </configuration>
                             </execution>
@@ -414,6 +411,12 @@
                 </plugins>
             </build>
         </profile>
+        <!--
+          ============================================================
+          Platform profiles — AUTO activation (matched to host OS)
+          These activate automatically on their native platform.
+          ============================================================
+        -->
         <profile>
             <id>linux</id>
             <activation>
@@ -492,6 +495,85 @@
                     <family>mac</family>
                     <arch>aarch64</arch>
                 </os>
+            </activation>
+            <properties>
+                <project.platform>mac</project.platform>
+                <project.arch>aarch64</project.arch>
+                <jdk.dest2>Contents/Home/</jdk.dest2>
+            </properties>
+        </profile>
+
+        <!--
+          ============================================================
+          Cross-platform override profiles — MANUAL activation only
+          Use these to force a specific target platform regardless of
+          host OS. Example:
+            mvn package -Dpackager.javapackager -Dtarget.platform=win
+          ============================================================
+        -->
+        <profile>
+            <id>target-linux-x64</id>
+            <activation>
+                <property>
+                    <name>target.platform</name>
+                    <value>linux</value>
+                </property>
+            </activation>
+            <properties>
+                <project.platform>linux</project.platform>
+                <project.arch>x64</project.arch>
+                <jdk.dest2></jdk.dest2>
+            </properties>
+        </profile>
+        <profile>
+            <id>target-linux-aarch64</id>
+            <activation>
+                <property>
+                    <name>target.platform</name>
+                    <value>linux-aarch64</value>
+                </property>
+            </activation>
+            <properties>
+                <project.platform>linux</project.platform>
+                <project.arch>aarch64</project.arch>
+                <jdk.dest2></jdk.dest2>
+            </properties>
+        </profile>
+        <profile>
+            <id>target-windows-x64</id>
+            <activation>
+                <property>
+                    <name>target.platform</name>
+                    <value>win</value>
+                </property>
+            </activation>
+            <properties>
+                <project.platform>windows</project.platform>
+                <project.arch>x64</project.arch>
+                <jdk.dest2></jdk.dest2>
+            </properties>
+        </profile>
+        <profile>
+            <id>target-mac-x64</id>
+            <activation>
+                <property>
+                    <name>target.platform</name>
+                    <value>mac</value>
+                </property>
+            </activation>
+            <properties>
+                <project.platform>mac</project.platform>
+                <project.arch>x64</project.arch>
+                <jdk.dest2>Contents/Home/</jdk.dest2>
+            </properties>
+        </profile>
+        <profile>
+            <id>target-mac-aarch64</id>
+            <activation>
+                <property>
+                    <name>target.platform</name>
+                    <value>mac-aarch64</value>
+                </property>
             </activation>
             <properties>
                 <project.platform>mac</project.platform>

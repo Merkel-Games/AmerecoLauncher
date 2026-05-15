@@ -4,6 +4,7 @@
  */
 package ru.amereco.amerecolauncher.minecraft.models;
 
+import com.google.gson.JsonElement;
 import java.net.URI;
 import java.util.List;
 
@@ -12,6 +13,7 @@ import java.util.List;
  * @author lanode
  */
 public record Version(
+    Arguments arguments,
     Downloads downloads,
     AssetIndexInfo assetIndex,
     List<Library> libraries,
@@ -19,6 +21,11 @@ public record Version(
     String id,
     String type
 ) {
+    public record Arguments(
+        List<JsonElement> game,
+        List<JsonElement> jvm
+    ) {}
+
     public record AssetIndexInfo(
         String id,
         String sha1,

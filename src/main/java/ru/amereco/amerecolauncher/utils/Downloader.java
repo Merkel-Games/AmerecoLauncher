@@ -17,8 +17,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-import javafx.scene.control.Alert;
-import javafx.scene.control.ButtonType;
 import ru.amereco.amerecolauncher.Config;
 
 /**

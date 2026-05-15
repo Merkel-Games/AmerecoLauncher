@@ -21,10 +21,11 @@ import ru.amereco.amerecolauncher.minecraft.Loader;
 import ru.amereco.amerecolauncher.minecraft.MinecraftDownloader;
 import ru.amereco.amerecolauncher.minecraft.fabric.FabricDownloader;
 import ru.amereco.amerecolauncher.utils.ProgressData;
+import ru.amereco.amerecolauncher.minecraft.authlibinjector.AuthlibInjectorDownloader;
 
 public class MainController {
     public enum UpdateNeeded {
-        MINECRAFT, FABRIC, HTTPSYNC;
+        MINECRAFT, FABRIC, AUTHLIB_INJECTOR, HTTPSYNC;
         public static final EnumSet<UpdateNeeded> ALL_OPTS = EnumSet.allOf(UpdateNeeded.class);
     }
     
@@ -32,6 +33,7 @@ public class MainController {
     private HTTPSync httpSync;
     private MinecraftDownloader minecraftDownloader;
     private FabricDownloader fabricDownloader;
+    private AuthlibInjectorDownloader authlibInjectorDownloader;
     private Thread minecraftThread;
     
     private EnumSet<UpdateNeeded> updateNeeded = EnumSet.noneOf(UpdateNeeded.class);
@@ -60,6 +62,8 @@ public class MainController {
         minecraftDownloader.setOnProgress(this::handleProgressUpdate);
         fabricDownloader = new FabricDownloader();
         fabricDownloader.setOnProgress(this::handleProgressUpdate);
+        authlibInjectorDownloader = new AuthlibInjectorDownloader();
+        authlibInjectorDownloader.setOnProgress(this::handleProgressUpdate);
         
         // Initialize HTTPSync
         String baseUrl = "https://lanode.augmeneco.ru/rpcraft_dist/instances/rpcraft/";
@@ -98,6 +102,8 @@ public class MainController {
                     updateNeeded.add(UpdateNeeded.MINECRAFT);
                 if (fabricDownloader.checkUpdates("1.20.1-fabric-0.19.1"))
                     updateNeeded.add(UpdateNeeded.FABRIC);
+                if (authlibInjectorDownloader.checkUpdates("authlib-injector-1.2.7"))
+                    updateNeeded.add(UpdateNeeded.AUTHLIB_INJECTOR);
                 if (httpSync.checkUpdates("")) 
                     updateNeeded.add(UpdateNeeded.HTTPSYNC);
                                      
@@ -130,6 +136,8 @@ public class MainController {
                     minecraftDownloader.download("1.20.1");
                 if (updateNeeded.contains(UpdateNeeded.FABRIC))
                     fabricDownloader.download("1.20.1-fabric-0.19.1");
+                if (updateNeeded.contains(UpdateNeeded.AUTHLIB_INJECTOR))
+                    fabricDownloader.download("authlib-injector-1.2.7");
                 if (updateNeeded.contains(UpdateNeeded.HTTPSYNC))
                     httpSync.download("");
                 
@@ -151,14 +159,12 @@ public class MainController {
     }
 
     private void handleProgressUpdate(ProgressData progress) {
-        javafx.application.Platform.runLater(() -> {
-            stageLabel.setText(progress.stage());
-            stepLabel.setText(progress.step());
-            progressBar.setProgress(progress.maxProgress() > 0 ?
-                (double)progress.progress() / progress.maxProgress() : 0);
-            progressLabel.setText(String.format("%d / %d",
-                progress.progress(), progress.maxProgress()));
-        });
+        stageLabel.setText(progress.stage());
+        stepLabel.setText(progress.step());
+        progressBar.setProgress(progress.maxProgress() > 0 ?
+            (double)progress.progress() / progress.maxProgress() : 0);
+        progressLabel.setText(String.format("%d / %d",
+            progress.progress(), progress.maxProgress()));
     }
     
     private void hideProgress() {
@@ -193,6 +199,7 @@ public class MainController {
                     Loader loader = new Loader(minecraftLauncher);
                     loader.loadFull("1.20.1");
                     loader.loadPatch("1.20.1-fabric-0.19.1");
+                    loader.loadPatch("authlib-injector-1.2.7");
                     minecraftLauncher.launch();
                 } catch (Exception exc) {
                     exc.printStackTrace();
