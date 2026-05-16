@@ -55,7 +55,10 @@ public abstract class Downloader extends ProgressSupplier {
 
     protected void downloadToPath(URI url, Path path) throws IOException, InterruptedException {
         Files.createDirectories(path.getParent());
-        HttpClient.newHttpClient().send(HttpRequest.newBuilder(url).build(), HttpResponse.BodyHandlers.ofFile(path));
+        HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.ALWAYS)
+            .build()
+            .send(HttpRequest.newBuilder(url).build(), HttpResponse.BodyHandlers.ofFile(path));
     }
     
     protected void downloadToPathInThread(URI url, Path path) {

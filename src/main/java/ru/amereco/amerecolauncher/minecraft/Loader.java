@@ -65,6 +65,7 @@ public class Loader {
     }
 
     private void loadClassPaths(Version version) {
+        if (version.libraries() == null) return;
         List<Path> classPaths = getClassPaths(version, librariesDir);
         minecraftLauncher.classPaths.addAll(classPaths);
     }

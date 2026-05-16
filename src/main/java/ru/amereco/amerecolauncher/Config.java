@@ -8,6 +8,8 @@ import dev.dirs.ProjectDirectories;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 public class Config {
@@ -35,6 +37,8 @@ public class Config {
     public String uuid;
     @Expose
     public String authlibApiUrl;
+    @Expose
+    public Map<String, Boolean> features;
 
     private Config() {
         // Значения по умолчанию
@@ -44,6 +48,7 @@ public class Config {
         this.javaDir = System.getProperty("java.home");
         this.downloadThreadsCount = Runtime.getRuntime().availableProcessors();
         this.authlibApiUrl = "https://amereco.ru/wp-json/authlib-api/v1/yggdrasil/";
+        this.features = new HashMap<>();
     }
 
     public static Config get() {

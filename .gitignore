@@ -90,4 +90,14 @@ nb-configuration.xml
 *.log
 /nbproject/
 
+##############################
+## jDeploy
+##############################
+node_modules/
+jdeploy-bundle/
+jdeploy/
+
+##############################
+## Tests
+##############################
 test/

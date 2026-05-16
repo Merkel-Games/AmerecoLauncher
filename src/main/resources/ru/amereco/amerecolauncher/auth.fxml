@@ -68,6 +68,11 @@
                <font>
                   <Font name="Public Pixel" size="13.0" />
                </font></Button>
+            <Label fx:id="errorLabel" maxWidth="400.0" text="" textAlignment="CENTER" textFill="RED" visible="false" wrapText="true">
+               <font>
+                  <Font size="10.0" />
+               </font>
+            </Label>
             <Region prefHeight="200.0" prefWidth="200.0" VBox.vgrow="ALWAYS" />
             <Label minHeight="-Infinity" text="НЕАВТОРИЗОВАННОЕ ИСПОЛЬЗОВАНИЕ ЭТОЙ СИСТЕМЫ СТРОГО ЗАПРЕЩЕНО МЕЖДУНАРОДНЫМ ЗАКОНОМ.&#10;ВЕСЬ СЕТЕВОЙ ТРАФИК МОНИТОРИТСЯ ДЛЯ ВЫЯВЛЕНИЯ НЕСАНКЦИОНИРОВАННОГО ДОСТУПА.&#10;ДЛЯ ЗАЩИТЫ СИСТЕМЫ ОТ НЕАВТОРИЗОВАННОГО ИСПОЛЬЗОВАНИЯ И ОБЕСПЕЧЕНИЯ ЕЁ КОРРЕКТНОЙ РАБОТЫ, ЛЮБЫЕ ДЕЙСТВИЯ ПОЛЬЗОВАТЕЛЕЙ МОГУТ БЫТЬ ПРОСЛЕЖЕНЫ И ЗАПИСАНЫ СОТРУДНИКАМИ, УПОЛНОМОЧЕННЫМИ AMERECO." textAlignment="CENTER" textFill="#7e7e7e" wrapText="true">
                <font>

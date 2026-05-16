@@ -137,7 +137,7 @@ public class MainController {
                 if (updateNeeded.contains(UpdateNeeded.FABRIC))
                     fabricDownloader.download("1.20.1-fabric-0.19.1");
                 if (updateNeeded.contains(UpdateNeeded.AUTHLIB_INJECTOR))
-                    fabricDownloader.download("authlib-injector-1.2.7");
+                    authlibInjectorDownloader.download("authlib-injector-1.2.7");
                 if (updateNeeded.contains(UpdateNeeded.HTTPSYNC))
                     httpSync.download("");
                 
@@ -159,12 +159,14 @@ public class MainController {
     }
 
     private void handleProgressUpdate(ProgressData progress) {
-        stageLabel.setText(progress.stage());
-        stepLabel.setText(progress.step());
-        progressBar.setProgress(progress.maxProgress() > 0 ?
-            (double)progress.progress() / progress.maxProgress() : 0);
-        progressLabel.setText(String.format("%d / %d",
-            progress.progress(), progress.maxProgress()));
+        javafx.application.Platform.runLater(() -> {
+            stageLabel.setText(progress.stage());
+            stepLabel.setText(progress.step());
+            progressBar.setProgress(progress.maxProgress() > 0 ?
+                (double)progress.progress() / progress.maxProgress() : 0);
+            progressLabel.setText(String.format("%d / %d",
+                progress.progress(), progress.maxProgress()));
+        });
     }
     
     private void hideProgress() {
@@ -195,11 +197,26 @@ public class MainController {
                             Path.of(mainDir), 
                             Path.of(gameDir)
                     );
-                    minecraftLauncher.userName = config.username;
+                    
+                    try {
+                        AuthServer auth = new AuthServer();
+                        var resp = auth.refresh(config.accessToken, config.clientId, null);
+                        config.accessToken = resp.accessToken();
+                        if (resp.selectedProfile() != null)
+                            minecraftLauncher.userName = resp.selectedProfile().name();
+                        config.save();
+                    } catch (Exception e) {
+                        // proceed — authlib-injector can resolve profile from token
+                    }
+                    
+                    minecraftLauncher.uuid = config.uuid;
+                    minecraftLauncher.accessToken = config.accessToken;
+                    minecraftLauncher.clientId = config.clientId;
+                    
                     Loader loader = new Loader(minecraftLauncher);
+                    loader.loadPatch("authlib-injector-1.2.7");
                     loader.loadFull("1.20.1");
                     loader.loadPatch("1.20.1-fabric-0.19.1");
-                    loader.loadPatch("authlib-injector-1.2.7");
                     minecraftLauncher.launch();
                 } catch (Exception exc) {
                     exc.printStackTrace();
@@ -225,7 +242,14 @@ public class MainController {
     
     @FXML
     private void onLogoutPressed() throws IOException{
-        config.username = "";
+        try {
+            AuthServer auth = new AuthServer();
+            auth.invalidate(config.accessToken, config.clientId);
+        } catch (Exception e) {
+            // proceed — authlib-injector can resolve profile from token
+        }
+        config.accessToken = "";
+        config.uuid = "";
         config.save();
         switchToAuth();
     }

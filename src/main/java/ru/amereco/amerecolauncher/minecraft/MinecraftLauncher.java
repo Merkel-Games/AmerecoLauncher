@@ -52,25 +52,47 @@ public class MinecraftLauncher {
 
     private List<String> getArgumentsString(List<String> arguments, Map<String, String> substitutes) {
         List<String> result = new ArrayList<>();
-        String keysPattern = substitutes.keySet().stream()
-            .map(Pattern::quote)
-            .collect(Collectors.joining("|"));
-        Pattern pat = Pattern.compile("\\$\\{(" + keysPattern + ")\\}");
-        for (int i=0; i<arguments.size(); i++) {
-            Matcher m2, m1;
-            m1 = pat.matcher(arguments.get(i));
-            if (m1.find() && m1.start() > 0) {
-                String key = m1.group(1);
-                result.add(arguments.get(i).replace("${" + key + "}", substitutes.get(key)));
-            } else if (i+1 < arguments.size() && Pattern.matches("\\$\\{.*\\}", arguments.get(i+1))) {
-                if ((m2 = pat.matcher(arguments.get(i+1))).matches()) {
-                    result.add(arguments.get(i));
-                    result.add(substitutes.get(m2.group(1)));
+        Pattern placeholder = Pattern.compile("\\$\\{([^}]+)\\}"); // ловит любой ${key}
+
+        for (int i = 0; i < arguments.size(); i++) {
+            String current = arguments.get(i);
+
+            // Пара: флаг (без ${…}) + следующий элемент — чистый плейсхолдер ${…}
+            if (!placeholder.matcher(current).find()
+                    && i + 1 < arguments.size()
+                    && arguments.get(i + 1).matches("\\$\\{[^}]+\\}")) {
+
+                String next = arguments.get(i + 1);
+                Matcher m = placeholder.matcher(next);
+                if (m.find()) {
+                    String key = m.group(1);
+                    if (substitutes.containsKey(key)) {
+                        result.add(current);               // флаг
+                        result.add(substitutes.get(key));  // значение
+                    }
+                    // если ключ неизвестен — ничего не добавляем (пара удаляется)
                 }
-                i++;
-            } else {
-                result.add(arguments.get(i));
+                i++; // пропускаем обработанный плейсхолдер
+                continue;
             }
+
+            // Все остальные случаи: одиночный аргумент (может содержать ${…} внутри)
+            Matcher matcher = placeholder.matcher(current);
+            StringBuffer sb = new StringBuffer();
+            boolean allKnown = true;
+            while (matcher.find()) {
+                String key = matcher.group(1);
+                if (!substitutes.containsKey(key)) {
+                    allKnown = false;
+                    break;  // нашли неразрешимый ключ – аргумент будет удалён
+                }
+                matcher.appendReplacement(sb, Matcher.quoteReplacement(substitutes.get(key)));
+            }
+            if (allKnown) {
+                matcher.appendTail(sb);
+                result.add(sb.toString());
+            }
+            // иначе аргумент пропускается (удаляется)
         }
         return result;
     }
@@ -97,6 +119,7 @@ public class MinecraftLauncher {
         substitutes.put("clientid", clientId);
         substitutes.put("launcher_name", props.getProperty("name"));
         substitutes.put("launcher_version", props.getProperty("version"));
+        substitutes.put("quickPlayMultiplayer", "lanode.augmeneco.ru:25565");
 
         List<String> command = new ArrayList<>();
         command.add(executable);

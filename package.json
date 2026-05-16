@@ -1,0 +1,21 @@
+{
+  "name": "amereco-launcher",
+  "bin": {
+    "amereco-launcher": "jdeploy-bundle/jdeploy.js"
+  },
+  "version": "1.0.0",
+  "description": "Amereco Minecraft Launcher",
+  "main": "jdeploy-bundle/jdeploy.js",
+  "jdeploy": {
+    "jar": "target/AmerecoLauncher-1.0.0.jar",
+    "javaVersion": "21",
+    "javafx": true,
+    "title": "Amereco Launcher",
+    "url": "https://amereco.ru",
+    "mainClass": "ru.amereco.amerecolauncher.Main",
+    "description": "Amereco Minecraft Server Launcher"
+  },
+  "dependencies": {
+    "shelljs": "^0.8.5"
+  }
+}

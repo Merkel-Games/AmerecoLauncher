@@ -19,11 +19,10 @@ import ru.amereco.amerecolauncher.httpsync.HTTPSync;
  * @author lanode
  */
 public class LauncherUpdater {
-    private static final Config config = Config.get();
     private static final String baseUrl = "https://amereco.ru/client_dist/launcher/";
     private static final String configUrl = "https://amereco.ru/client_dist/launcher/meta.json";
-    private static final Path basePath = Path.of(config.projectDir.dataLocalDir, "launcher/");
-    private static final Path configPath = Path.of(config.projectDir.dataLocalDir, "launcher/meta.json");
+    private static final Path basePath = Path.of(Config.projectDir.dataLocalDir, "launcher/");
+    private static final Path configPath = Path.of(Config.projectDir.dataLocalDir, "launcher/meta.json");
     private static final HTTPSync httpSync = new HTTPSync(configUrl, baseUrl, configPath, basePath, 5000, 3000);
     
     private static void restartApplication() throws IOException, URISyntaxException

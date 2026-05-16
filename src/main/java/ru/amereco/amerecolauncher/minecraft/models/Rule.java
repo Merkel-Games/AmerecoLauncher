@@ -5,6 +5,9 @@
 package ru.amereco.amerecolauncher.minecraft.models;
 
 import com.google.gson.annotations.SerializedName;
+
+import ru.amereco.amerecolauncher.Config;
+
 import java.util.Map;
 
 /**
@@ -63,6 +66,15 @@ public record Rule(
             // Проверяем версию, если указана
             if (os.version() != null && !os.version().isEmpty()) {
                 if (!org.apache.commons.exec.OS.isVersion(os.version())) {
+                    return shouldDisallow;
+                }
+            }
+        }
+
+        if (features != null) {
+            Config config = Config.get();
+            for (var entry : features.entrySet()) {
+                if (!(entry.getValue() && config.features.getOrDefault(entry.getKey(), false))) {
                     return shouldDisallow;
                 }
             }
