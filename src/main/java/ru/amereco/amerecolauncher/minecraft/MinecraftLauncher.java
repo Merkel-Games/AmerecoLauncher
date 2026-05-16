@@ -30,6 +30,7 @@ public class MinecraftLauncher {
     public Path nativesDir;
     public String uuid;
     public String accessToken;
+    public String clientId;
     public List<String> gameArguments = new ArrayList<>();
     public List<String> jvmArguments = new ArrayList<>();
 
@@ -49,23 +50,26 @@ public class MinecraftLauncher {
         this.gameDir = gameDir.toAbsolutePath();
     }
 
-    private List<String> getArgumentsString(List<String> arguments, Map<String, String> subtitutes) {
+    private List<String> getArgumentsString(List<String> arguments, Map<String, String> substitutes) {
         List<String> result = new ArrayList<>();
-        String keysPattern = subtitutes.keySet().stream()
+        String keysPattern = substitutes.keySet().stream()
             .map(Pattern::quote)
             .collect(Collectors.joining("|"));
-        Pattern re = Pattern.compile("\\${(" + keysPattern + ")}");
+        Pattern pat = Pattern.compile("\\$\\{(" + keysPattern + ")\\}");
         for (int i=0; i<arguments.size(); i++) {
-            Matcher m1 = re.matcher(arguments.get(i));
+            Matcher m2, m1;
+            m1 = pat.matcher(arguments.get(i));
             if (m1.find() && m1.start() > 0) {
                 String key = m1.group(1);
-                result.add(arguments.get(i).replace(key, subtitutes.get(key)));
-            } else if (i+1 < arguments.size()) {
-                Matcher m2 = re.matcher(arguments.get(i+1));
-                if (m2.matches()) {
+                result.add(arguments.get(i).replace("${" + key + "}", substitutes.get(key)));
+            } else if (i+1 < arguments.size() && Pattern.matches("\\$\\{.*\\}", arguments.get(i+1))) {
+                if ((m2 = pat.matcher(arguments.get(i+1))).matches()) {
                     result.add(arguments.get(i));
-                    result.add(subtitutes.get(m2.group(1)));
+                    result.add(substitutes.get(m2.group(1)));
                 }
+                i++;
+            } else {
+                result.add(arguments.get(i));
             }
         }
         return result;
@@ -73,33 +77,34 @@ public class MinecraftLauncher {
 
     public void launch() throws IOException, InterruptedException {
         Properties props = new Properties();
-        props.load(getClass().getClassLoader().getResourceAsStream("application.properties"));
+        props.load(getClass().getClassLoader().getResourceAsStream("ru/amereco/amerecolauncher/application.properties"));
 
-        Map<String, String> subtitutes = new HashMap<>();
-        subtitutes.put("classpath", classPaths.stream()
+        Map<String, String> substitutes = new HashMap<>();
+        substitutes.put("classpath", classPaths.stream()
                                     .map(Path::toString)
-                                    .map((p) -> "\""+p+"\"")
+                                    // .map((p) -> "\""+p+"\"")
                                     .collect(Collectors.joining(File.pathSeparator)));
-        subtitutes.put("auth_player_name", userName);
-        subtitutes.put("user_type", userType);
-        subtitutes.put("version_name", version);
-        subtitutes.put("version_type", versionType);
-        subtitutes.put("assets_root", assetsDir.toString());
-        subtitutes.put("assets_index_name", assetIndex);
-        subtitutes.put("game_directory", gameDir.toString());
-        subtitutes.put("natives_directory", nativesDir.toString());
-        subtitutes.put("auth_uuid", uuid);
-        subtitutes.put("auth_access_token", accessToken);
-        // subtitutes.put("clientid", clientId);
-        subtitutes.put("clientid", "sssssss");
-        subtitutes.put("launcher_name", props.getProperty("name"));
-        subtitutes.put("launcher_version", props.getProperty("version"));
+        substitutes.put("auth_player_name", userName);
+        substitutes.put("user_type", userType);
+        substitutes.put("version_name", version);
+        substitutes.put("version_type", versionType);
+        substitutes.put("assets_root", assetsDir.toString());
+        substitutes.put("assets_index_name", assetIndex);
+        substitutes.put("game_directory", gameDir.toString());
+        substitutes.put("natives_directory", nativesDir.toString());
+        substitutes.put("auth_uuid", uuid);
+        substitutes.put("auth_access_token", accessToken);
+        substitutes.put("clientid", clientId);
+        substitutes.put("launcher_name", props.getProperty("name"));
+        substitutes.put("launcher_version", props.getProperty("version"));
 
         List<String> command = new ArrayList<>();
         command.add(executable);
-        command.addAll(getArgumentsString(jvmArguments, subtitutes));
+        command.addAll(getArgumentsString(jvmArguments, substitutes));
         command.add(mainClass);
-        command.addAll(getArgumentsString(gameArguments, subtitutes));
+        command.addAll(getArgumentsString(gameArguments, substitutes));
+        
+        System.out.println(command.stream().collect(Collectors.joining("\n")));
         
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(new File(gameDir.toString()));
