@@ -19,14 +19,14 @@ jobs:
               target/AmerecoLauncher*.exe
               target/AmerecoLauncher*.msi
               target/AmerecoLauncher*.msm
-          - os: macos-latest
-            ext: |
-              target/AmerecoLauncher*.pkg
-              target/AmerecoLauncher*.dmg
-          - os: macos-latest-large
-            ext: |
-              target/AmerecoLauncher*.pkg
-              target/AmerecoLauncher*.dmg
+          # - os: macos-latest
+          #   ext: |
+          #     target/AmerecoLauncher*.pkg
+          #     target/AmerecoLauncher*.dmg
+          # - os: macos-latest-large
+          #   ext: |
+          #     target/AmerecoLauncher*.pkg
+          #     target/AmerecoLauncher*.dmg
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
