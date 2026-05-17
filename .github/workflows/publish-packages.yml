@@ -24,10 +24,10 @@ jobs:
             ext: |
               target/AmerecoLauncher*.pkg
               target/AmerecoLauncher*.dmg
-          - os: macos-latest-large
-            ext: |
-              target/AmerecoLauncher*.pkg
-              target/AmerecoLauncher*.dmg
+          # - os: macos-latest-large
+          #   ext: |
+          #     target/AmerecoLauncher*.pkg
+          #     target/AmerecoLauncher*.dmg
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -84,6 +84,7 @@ jobs:
           
   release:
     needs: [build-jar, build-packages]
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Download Artifacts
