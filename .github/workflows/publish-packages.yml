@@ -7,6 +7,7 @@ jobs:
   build-packages:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -19,14 +20,14 @@ jobs:
               target/AmerecoLauncher*.exe
               target/AmerecoLauncher*.msi
               target/AmerecoLauncher*.msm
-          # - os: macos-latest
-          #   ext: |
-          #     target/AmerecoLauncher*.pkg
-          #     target/AmerecoLauncher*.dmg
-          # - os: macos-latest-large
-          #   ext: |
-          #     target/AmerecoLauncher*.pkg
-          #     target/AmerecoLauncher*.dmg
+          - os: macos-latest
+            ext: |
+              target/AmerecoLauncher*.pkg
+              target/AmerecoLauncher*.dmg
+          - os: macos-latest-large
+            ext: |
+              target/AmerecoLauncher*.pkg
+              target/AmerecoLauncher*.dmg
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -49,7 +50,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          if-no-files-found: error
+          if-no-files-found: warn
           name: AmerecoLauncher_${{ runner.os }}-${{ runner.arch }}.${{ matrix.ext }}
           path: ${{ matrix.ext }}
           
