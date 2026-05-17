@@ -11,6 +11,7 @@ import java.util.EnumSet;
 
 import ru.amereco.amerecolauncher.httpsync.HTTPSync;
 import ru.amereco.amerecolauncher.minecraft.MinecraftLauncher;
+import ru.amereco.amerecolauncher.minecraft.MinecraftSession;
 import javafx.scene.control.Button;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.Label;
@@ -34,8 +35,7 @@ public class MainController {
     private MinecraftDownloader minecraftDownloader;
     private FabricDownloader fabricDownloader;
     private AuthlibInjectorDownloader authlibInjectorDownloader;
-    private Thread minecraftThread;
-    
+
     private EnumSet<UpdateNeeded> updateNeeded = EnumSet.noneOf(UpdateNeeded.class);
     
     @FXML private StackPane root;
@@ -88,8 +88,20 @@ public class MainController {
             }
         });
         checkUpdates();
+
+        var session = MinecraftSession.getInstance();
+        if (session.isRunning()) {
+            session.setOnStopped(() -> javafx.application.Platform.runLater(() -> {
+                mainButton.setText("Играть");
+                mainButton.setOnAction(e -> launchMinecraft());
+            }));
+            javafx.application.Platform.runLater(() -> {
+                mainButton.setText("Остановить");
+                mainButton.setOnAction(e -> stopMinecraft());
+            });
+        }
     }
-    
+
     public void onOpen() {
         checkUpdates();
     }
@@ -109,6 +121,9 @@ public class MainController {
                                      
                 javafx.application.Platform.runLater(() -> {
                     hideProgress();
+                    if (MinecraftSession.getInstance().isRunning()) {
+                        return;
+                    }
                     if (!updateNeeded.isEmpty()) {
                         mainButton.setText("Обновить");
                         mainButton.setOnAction(e -> startUpdate());
@@ -184,6 +199,9 @@ public class MainController {
     }
 
     private void launchMinecraft() {
+        var session = MinecraftSession.getInstance();
+        if (session.isRunning()) return;
+
         try {
             String mainDir = config.mainDir;
             String gameDir = Paths.get(mainDir, "instances/rpcraft").toString();
@@ -191,13 +209,18 @@ public class MainController {
             mainButton.setText("Остановить");
             mainButton.setOnAction(e -> stopMinecraft());
 
-            minecraftThread = new Thread(() -> {
-                try {              
+            session.setOnStopped(() -> javafx.application.Platform.runLater(() -> {
+                mainButton.setText("Играть");
+                mainButton.setOnAction(e -> launchMinecraft());
+            }));
+
+            session.launch(() -> {
+                try {
                     MinecraftLauncher minecraftLauncher = new MinecraftLauncher(
-                        Path.of(mainDir), 
+                        Path.of(mainDir),
                         Path.of(gameDir)
                     );
-                    
+
                     try {
                         AuthServer auth = new AuthServer();
                         var resp = auth.refresh(config.accessToken, config.clientId, null);
@@ -208,11 +231,11 @@ public class MainController {
                     } catch (Exception e) {
                         // proceed — authlib-injector can resolve profile from token
                     }
-                    
+
                     minecraftLauncher.uuid = config.uuid;
                     minecraftLauncher.accessToken = config.accessToken;
                     minecraftLauncher.clientId = config.clientId;
-                    
+
                     Loader loader = new Loader(minecraftLauncher);
                     loader.loadPatch("authlib-injector-1.2.7");
                     loader.loadFull("1.20.1");
@@ -221,19 +244,11 @@ public class MainController {
                 } catch (Exception exc) {
                     exc.printStackTrace();
                     javafx.application.Platform.runLater(() -> {
-                        mainButton.setText("Играть");
-                        mainButton.setOnAction(e -> launchMinecraft());
                         stageLabel.setText("Ошибка запуска");
                         stepLabel.setText(exc.getMessage());
                     });
-                } finally {
-                    javafx.application.Platform.runLater(() -> {
-                        mainButton.setText("Играть");
-                        mainButton.setOnAction(e -> launchMinecraft());
-                    });
                 }
             });
-            minecraftThread.start();
         } catch (Exception exc) {
             stageLabel.setText("Ошибка инициализации");
             stepLabel.setText(exc.getMessage());
@@ -256,8 +271,7 @@ public class MainController {
     }
 
     public void stopMinecraft() {
-        if (minecraftThread != null && minecraftThread.isAlive())
-            minecraftThread.interrupt();
+        MinecraftSession.getInstance().stop();
     }
     
     @FXML
