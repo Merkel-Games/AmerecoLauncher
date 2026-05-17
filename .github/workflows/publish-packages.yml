@@ -51,7 +51,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           if-no-files-found: warn
-          name: AmerecoLauncher_${{ runner.os }}-${{ runner.arch }}.${{ matrix.ext }}
+          name: AmerecoLauncher_${{ runner.os }}-${{ runner.arch }}
           path: ${{ matrix.ext }}
           
   build-jar:
