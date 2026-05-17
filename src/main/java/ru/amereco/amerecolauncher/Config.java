@@ -49,6 +49,7 @@ public class Config {
         this.downloadThreadsCount = Runtime.getRuntime().availableProcessors();
         this.authlibApiUrl = "https://amereco.ru/wp-json/authlib-api/v1/yggdrasil/";
         this.features = new HashMap<>();
+        this.features.put("is_quick_play_multiplayer", true);
     }
 
     public static Config get() {

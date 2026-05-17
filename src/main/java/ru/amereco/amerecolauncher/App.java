@@ -24,7 +24,6 @@ public class App extends Application {
         stage.getIcons().add(new Image(getClass().getResourceAsStream("images/logo.png")));
         
         Config config = Config.get();
-       config.features.put("is_quick_play_multiplayer", true);
         
 //        LauncherUpdater.checkAndUpdate();
         

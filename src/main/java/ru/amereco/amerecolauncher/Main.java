@@ -10,6 +10,8 @@ package ru.amereco.amerecolauncher;
  */
 public class Main {
     public static void main(String[] args) {
+        System.setProperty("prism.texture.filter", "nearest");
+
         App.main(args);
     }
 }
