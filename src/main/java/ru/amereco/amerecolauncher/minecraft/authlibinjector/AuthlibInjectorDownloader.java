@@ -53,7 +53,7 @@ public class AuthlibInjectorDownloader extends Downloader {
         String downloadUrl = String.format(AUTHLIB_INJECTOR_URL, version, version);
         String libraryPath = String.format(LIBRARY_PATH, version, version);
         String jarAbsolutePath = Path.of(mainDir, "libraries", libraryPath).toString();
-        String apiUrl = Config.get().authlibApiUrl;
+        String apiUrl = Config.properties.getProperty("authlibApiUrl");
         Version versionObj = new Version(
             new Version.Arguments(
                 null,

@@ -72,11 +72,7 @@ public class AuthServer {
     private final String baseUrl;
 
     public AuthServer() {
-        this(Config.get());
-    }
-
-    public AuthServer(Config config) {
-        String url = config.authlibApiUrl;
+        String url = Config.properties.getProperty("authlibApiUrl");
         this.baseUrl = (url.endsWith("/") ? url : url + "/") + "authserver/";
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(5000))

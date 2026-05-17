@@ -194,8 +194,8 @@ public class MainController {
             minecraftThread = new Thread(() -> {
                 try {              
                     MinecraftLauncher minecraftLauncher = new MinecraftLauncher(
-                            Path.of(mainDir), 
-                            Path.of(gameDir)
+                        Path.of(mainDir), 
+                        Path.of(gameDir)
                     );
                     
                     try {
@@ -242,6 +242,7 @@ public class MainController {
     
     @FXML
     private void onLogoutPressed() throws IOException{
+        stopMinecraft();
         try {
             AuthServer auth = new AuthServer();
             auth.invalidate(config.accessToken, config.clientId);
@@ -255,7 +256,8 @@ public class MainController {
     }
 
     public void stopMinecraft() {
-        minecraftThread.interrupt();
+        if (minecraftThread != null && minecraftThread.isAlive())
+            minecraftThread.interrupt();
     }
     
     @FXML

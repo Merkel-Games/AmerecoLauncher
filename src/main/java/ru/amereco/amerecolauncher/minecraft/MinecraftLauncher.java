@@ -98,9 +98,6 @@ public class MinecraftLauncher {
     }
 
     public void launch() throws IOException, InterruptedException {
-        Properties props = new Properties();
-        props.load(getClass().getClassLoader().getResourceAsStream("ru/amereco/amerecolauncher/application.properties"));
-
         Map<String, String> substitutes = new HashMap<>();
         substitutes.put("classpath", classPaths.stream()
                                     .map(Path::toString)
@@ -117,8 +114,8 @@ public class MinecraftLauncher {
         substitutes.put("auth_uuid", uuid);
         substitutes.put("auth_access_token", accessToken);
         substitutes.put("clientid", clientId);
-        substitutes.put("launcher_name", props.getProperty("name"));
-        substitutes.put("launcher_version", props.getProperty("version"));
+        substitutes.put("launcher_name", Config.properties.getProperty("name"));
+        substitutes.put("launcher_version", Config.properties.getProperty("version"));
         substitutes.put("quickPlayMultiplayer", "lanode.augmeneco.ru:25565");
 
         List<String> command = new ArrayList<>();

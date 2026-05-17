@@ -6,10 +6,12 @@ import com.google.gson.annotations.Expose;
 import dev.dirs.ProjectDirectories;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.UUID;
 
 public class Config {
@@ -20,6 +22,20 @@ public class Config {
             .setPrettyPrinting()
             .create();
     public static final ProjectDirectories projectDir = ProjectDirectories.from("ru", "amereco", "AmerecoLauncher");
+
+    public static final Properties properties = new Properties();
+    static {
+        try (InputStream is = Config.class.getClassLoader()
+                .getResourceAsStream("ru/amereco/amerecolauncher/application.properties")) {
+            if (is == null) {
+                throw new RuntimeException("Properties file not found in classpath");
+            }
+            properties.load(is);
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+    
 
     private static Config instance;
 
@@ -36,18 +52,16 @@ public class Config {
     @Expose
     public String uuid;
     @Expose
-    public String authlibApiUrl;
-    @Expose
     public Map<String, Boolean> features;
 
     private Config() {
         // Значения по умолчанию
         this.mainDir = Path.of(projectDir.dataLocalDir, ".minceraft").toString();
+        this.uuid = null;
         this.accessToken = null;
         this.clientId = UUID.randomUUID().toString().replace("-", "");
         this.javaDir = System.getProperty("java.home");
         this.downloadThreadsCount = Runtime.getRuntime().availableProcessors();
-        this.authlibApiUrl = "https://amereco.ru/wp-json/authlib-api/v1/yggdrasil/";
         this.features = new HashMap<>();
         this.features.put("is_quick_play_multiplayer", true);
     }
