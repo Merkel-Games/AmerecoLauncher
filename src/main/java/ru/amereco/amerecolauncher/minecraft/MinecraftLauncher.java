@@ -116,7 +116,7 @@ public class MinecraftLauncher {
         substitutes.put("clientid", clientId);
         substitutes.put("launcher_name", Config.properties.getProperty("name"));
         substitutes.put("launcher_version", Config.properties.getProperty("version"));
-        substitutes.put("quickPlayMultiplayer", "lanode.augmeneco.ru:25565");
+        substitutes.put("quickPlayMultiplayer", Config.properties.getProperty("quickPlayMultiplayer"));
 
         List<String> command = new ArrayList<>();
         command.add(executable);

@@ -212,6 +212,7 @@ public class MainController {
             session.setOnStopped(() -> javafx.application.Platform.runLater(() -> {
                 mainButton.setText("Играть");
                 mainButton.setOnAction(e -> launchMinecraft());
+                checkUpdates();
             }));
 
             session.launch(() -> {
