@@ -58,27 +58,56 @@ jobs:
           git fetch origin devel
           git checkout ${{ inputs.javapackager_commit }}
 
-      # Patch build.gradle directly so that the version is consistent across
-      # Gradle publishing, the embedded Maven subprocess (generatePluginDescriptor),
-      # and all generated POM/JAR artifacts. Using -Pversion alone does NOT
-      # propagate into the embedded Maven call, causing a version mismatch.
+      # Applies three patches to the cloned JavaPackager source before building:
       #
-      # Also upgrades commons-lang3 3.9 → 3.12.0 to fix a runtime crash:
+      # Fix 1 - project version: patch build.gradle so Gradle, the embedded Maven
+      #   subprocess (generatePluginDescriptor), and all generated POMs all see the
+      #   same version. Using -Pversion alone does NOT propagate into the Maven call.
+      #
+      # Fix 2 - commons-lang3 3.9 to 3.12.0: devel calls ObjectUtils.getIfNull()
+      #   which was added in 3.12.0, but build.gradle declares 3.9, causing:
       #   NoSuchMethodError: ObjectUtils.getIfNull(Object, Supplier)
-      # That method was added in commons-lang3 3.12.0, but devel declares 3.9.
-      - name: Patch build.gradle
+      #
+      # Fix 3 - Velocity template parse error in linux/startup.sh.vtl line 70:
+      #   Velocity 2.3 treats '@' as a directive sigil, so ${option[@]} causes:
+      #   Lexical error, Encountered "@" at line 70 column 89
+      #   The fix wraps that line in #[[...]]# (Velocity unparsed content block)
+      #   so it is emitted literally with no token substitution at all.
+      - name: Patch JavaPackager source
         if: steps.check.outputs.exists != 'true'
         run: |
           VERSION="${{ steps.pin-version.outputs.version }}"
  
-          # Fix 1: override the project version
+          # Fix 1: override the project version in build.gradle
           sed -i "s/^version = '.*'/version = '${VERSION}'/" JavaPackager/build.gradle
  
-          # Fix 2: upgrade commons-lang3 to 3.12.0 (getIfNull was added in 3.12)
+          # Fix 2: upgrade commons-lang3 from 3.9 to 3.12.0
           sed -i "s/commons-lang3:[0-9.]*/commons-lang3:3.12.0/" JavaPackager/build.gradle
  
-          echo "=== Patched version and commons-lang3 ==="
+          echo "=== build.gradle patches ==="
           grep "^version = \|commons-lang3" JavaPackager/build.gradle
+ 
+          # Fix 3: wrap the ${option[@]} line in a Velocity unparsed block.
+          # sed cannot handle the mix of quotes reliably, so use Python inline.
+          python3 - << 'PYEOF'
+          import re
+          path = "JavaPackager/src/main/resources/linux/startup.sh.vtl"
+          with open(path, "r") as f:
+              src = f.read()
+          # Match the exact line that triggers the Velocity lexer error
+          pattern = r'(\[ -f "\$\{JVMOptionsFile\}".*JVMOptionsFile\}\}")'
+          replacement = r'#[[ \1 ]]#'
+          patched, n = re.subn(pattern, replacement, src)
+          if n == 0:
+              print("WARNING: startup.sh.vtl pattern not matched - already patched or changed upstream")
+          else:
+              with open(path, "w") as f:
+                  f.write(patched)
+              print(f"Patched {n} occurrence(s) in {path}")
+          PYEOF
+ 
+          echo "=== startup.sh.vtl line 70 ==="
+          sed -n '70p' JavaPackager/src/main/resources/linux/startup.sh.vtl
 
       - name: Build and publish to Maven Local
         if: steps.check.outputs.exists != 'true'
