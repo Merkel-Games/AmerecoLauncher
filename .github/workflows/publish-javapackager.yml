@@ -1,0 +1,122 @@
+name: Publish JavaPackager Plugin
+on:
+  workflow_dispatch:
+    inputs:
+      javapackager_commit:
+        description: 'JavaPackager devel commit ID to build (full or short SHA)'
+        required: true
+
+jobs:
+  build-javapackager:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pin-version.outputs.version }}
+    steps:
+      - name: Resolve pinned commit and compute version
+        id: pin-version
+        run: |
+          COMMIT="${{ inputs.javapackager_commit }}"
+          SHA="${COMMIT:0:7}"
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "version=1.7.7-${SHA}" >> $GITHUB_OUTPUT
+
+      - name: Check if version exists in GitHub Packages
+        id: check
+        run: |
+          VERSION="${{ steps.pin-version.outputs.version }}"
+          PACKAGE_NAME="io.github.fvarrui.javapackager"
+          API_URL="https://api.github.com/orgs/Merkel-Games/packages/maven/${PACKAGE_NAME}/versions"
+          HTTP_CODE=$(curl -s -o /tmp/versions.json -w "%{http_code}" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "$API_URL")
+          if [ "$HTTP_CODE" = "200" ]; then
+            if grep -q "\"name\": \"${VERSION}\"" /tmp/versions.json; then
+              echo "exists=true" >> $GITHUB_OUTPUT
+              echo "Version ${VERSION} already exists in GitHub Packages, skipping build"
+            else
+              echo "exists=false" >> $GITHUB_OUTPUT
+              echo "Version ${VERSION} not found, will build and deploy"
+            fi
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "API returned HTTP ${HTTP_CODE}, assuming package does not exist, will build and deploy"
+          fi
+
+      - name: Set up JDK 17
+        if: steps.check.outputs.exists != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Clone JavaPackager and checkout pinned commit
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          git clone https://github.com/fvarrui/JavaPackager.git
+          cd JavaPackager
+          git fetch origin devel
+          git checkout ${{ inputs.javapackager_commit }}
+
+      - name: Patch version in build.gradle
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          VERSION="${{ steps.pin-version.outputs.version }}"
+          sed -i "s/^version = '.*'/version = '${VERSION}'/" JavaPackager/build.gradle
+          echo "Patched build.gradle version to: ${VERSION}"
+          grep "^version = " JavaPackager/build.gradle
+
+      - name: Build and publish to Maven Local
+        if: steps.check.outputs.exists != 'true'
+        run: cd JavaPackager && ./gradlew publishToMavenLocal
+
+      - name: Verify built artifacts
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          VERSION="${{ steps.pin-version.outputs.version }}"
+          BASE=~/.m2/repository/io/github/fvarrui/javapackager/${VERSION}
+          echo "Checking artifacts in: $BASE"
+          ls -la "$BASE"
+          test -f "$BASE/javapackager-${VERSION}.jar" || (echo "ERROR: JAR not found" && exit 1)
+          test -f "$BASE/javapackager-${VERSION}.pom" || (echo "ERROR: POM not found" && exit 1)
+          echo "All required artifacts found."
+
+      - name: Configure Maven for GitHub Packages deploy
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml << 'EOF'
+          <settings>
+            <servers>
+              <server>
+                <id>github</id>
+                <username>${env.GITHUB_ACTOR}</username>
+                <password>${env.GITHUB_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy to GitHub Packages
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          VERSION="${{ steps.pin-version.outputs.version }}"
+          BASE=~/.m2/repository/io/github/fvarrui/javapackager/${VERSION}
+
+          DEPLOY_DIR=$(mktemp -d)
+          cp "${BASE}/javapackager-${VERSION}.jar" "${DEPLOY_DIR}/"
+          cp "${BASE}/javapackager-${VERSION}.pom" "${DEPLOY_DIR}/"
+
+          mvn deploy:deploy-file \
+            -DgroupId=io.github.fvarrui \
+            -DartifactId=javapackager \
+            -Dversion="${VERSION}" \
+            -Dpackaging=jar \
+            -Dfile="${DEPLOY_DIR}/javapackager-${VERSION}.jar" \
+            -DpomFile="${DEPLOY_DIR}/javapackager-${VERSION}.pom" \
+            -DrepositoryId=github \
+            -Durl=https://maven.pkg.github.com/Merkel-Games/AmerecoLauncher
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
