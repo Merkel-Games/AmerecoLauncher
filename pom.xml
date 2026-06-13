@@ -304,7 +304,7 @@
                                     <jreMinVersion>${maven.compiler.release}</jreMinVersion>
                                     <displayName>Amereco Launcher</displayName>
                                     <url>${project.organization.url}</url>
-<!--                                    <additionalModules>
+<!--                                <additionalModules>
                                         <module>jdk.crypto.ec</module>
                                         <module>java.security.sasl</module>
                                         <module>jdk.crypto.cryptoki</module>
@@ -313,9 +313,9 @@
                                     </additionalModules>-->
                                     <linuxConfig>
                                         <pngFile>${basedir}/assets/AmerecoLauncher.png</pngFile>
-                                        <generateAppImage>false</generateAppImage>
+                                        <generateAppImage>true</generateAppImage>
                                         <generateDeb>true</generateDeb>
-                                        <generateRpm>false</generateRpm>
+                                        <generateRpm>true</generateRpm>
                                         <categories>
                                             <category>Game</category>
                                         </categories>
