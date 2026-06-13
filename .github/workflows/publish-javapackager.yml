@@ -58,13 +58,27 @@ jobs:
           git fetch origin devel
           git checkout ${{ inputs.javapackager_commit }}
 
-      - name: Patch version in build.gradle
+      # Patch build.gradle directly so that the version is consistent across
+      # Gradle publishing, the embedded Maven subprocess (generatePluginDescriptor),
+      # and all generated POM/JAR artifacts. Using -Pversion alone does NOT
+      # propagate into the embedded Maven call, causing a version mismatch.
+      #
+      # Also upgrades commons-lang3 3.9 → 3.12.0 to fix a runtime crash:
+      #   NoSuchMethodError: ObjectUtils.getIfNull(Object, Supplier)
+      # That method was added in commons-lang3 3.12.0, but devel declares 3.9.
+      - name: Patch build.gradle
         if: steps.check.outputs.exists != 'true'
         run: |
           VERSION="${{ steps.pin-version.outputs.version }}"
+ 
+          # Fix 1: override the project version
           sed -i "s/^version = '.*'/version = '${VERSION}'/" JavaPackager/build.gradle
-          echo "Patched build.gradle version to: ${VERSION}"
-          grep "^version = " JavaPackager/build.gradle
+ 
+          # Fix 2: upgrade commons-lang3 to 3.12.0 (getIfNull was added in 3.12)
+          sed -i "s/commons-lang3:[0-9.]*/commons-lang3:3.12.0/" JavaPackager/build.gradle
+ 
+          echo "=== Patched version and commons-lang3 ==="
+          grep "^version = \|commons-lang3" JavaPackager/build.gradle
 
       - name: Build and publish to Maven Local
         if: steps.check.outputs.exists != 'true'
