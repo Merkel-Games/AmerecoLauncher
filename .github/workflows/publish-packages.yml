@@ -20,13 +20,25 @@ jobs:
         id: check
         run: |
           VERSION="${{ steps.get-sha.outputs.version }}"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+          PACKAGE_NAME="io.github.fvarrui.javapackager"
+          # Use org endpoint (Merkel-Games is an organization)
+          API_URL="https://api.github.com/orgs/Merkel-Games/packages/maven/${PACKAGE_NAME}/versions"
+          HTTP_CODE=$(curl -s -o /tmp/versions.json -w "%{http_code}" \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://maven.pkg.github.com/Merkel-Games/AmerecoLauncher/io/github/fvarrui/javapackager/${VERSION}/javapackager-${VERSION}.pom" 2>&1)
+            -H "Accept: application/vnd.github+json" \
+            "$API_URL")
           if [ "$HTTP_CODE" = "200" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            # Check if any version in the list matches our VERSION
+            if grep -q "\"name\": \"${VERSION}\"" /tmp/versions.json; then
+              echo "exists=true" >> $GITHUB_OUTPUT
+              echo "Version ${VERSION} already exists in GitHub Packages"
+            else
+              echo "exists=false" >> $GITHUB_OUTPUT
+              echo "Version ${VERSION} not found, will build and deploy"
+            fi
           else
             echo "exists=false" >> $GITHUB_OUTPUT
+            echo "API returned HTTP ${HTTP_CODE}, assuming package does not exist or cannot be read, will build and deploy"
           fi
 
       - name: Set up JDK 17
