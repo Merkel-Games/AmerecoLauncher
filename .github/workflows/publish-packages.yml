@@ -57,7 +57,7 @@ jobs:
 
       - name: Build and install to local Maven repo
         if: steps.check.outputs.exists != 'true'
-        run: cd JavaPackager && ./gradlew publishToMavenLocal
+        run: cd JavaPackager && ./gradlew -Pversion=${{ steps.get-sha.outputs.version }} publishToMavenLocal
 
       - name: Configure Maven for GitHub Packages deploy
         if: steps.check.outputs.exists != 'true'
