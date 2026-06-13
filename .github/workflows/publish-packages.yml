@@ -93,6 +93,8 @@ jobs:
   build-packages:
     needs: build-javapackager
     runs-on: ${{ matrix.os }}
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -113,6 +115,7 @@ jobs:
               target/AmerecoLauncher*.dmg
     steps:
       - name: Configure Maven settings for GitHub Packages
+        shell: bash
         run: |
           mkdir -p ~/.m2
           cat > ~/.m2/settings.xml << 'EOF'
@@ -126,8 +129,6 @@ jobs:
             </servers>
           </settings>
           EOF
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout Repository
         uses: actions/checkout@v4
