@@ -3,42 +3,56 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      javapackager_commit:
+        description: 'JavaPackager devel commit ID to build (full or short SHA)'
+        required: true
 jobs:
   build-javapackager:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.set-version.outputs.version }}
+      version: ${{ steps.pin-version.outputs.version }}
     steps:
-      - name: Get JavaPackager devel HEAD SHA
-        id: get-sha
+      # Commented out: was automatically resolving HEAD of devel branch.
+      # Now replaced by a manual commit pin via workflow_dispatch input.
+      #
+      # - name: Get JavaPackager devel HEAD SHA and compute version
+      #   id: get-sha
+      #   run: |
+      #     SHA=$(git ls-remote https://github.com/fvarrui/JavaPackager.git refs/heads/devel | cut -c1-7)
+      #     echo "sha=$SHA" >> $GITHUB_OUTPUT
+      #     echo "version=1.7.7-${SHA}" >> $GITHUB_OUTPUT
+
+      - name: Resolve pinned commit and compute version
+        id: pin-version
         run: |
-          SHA=$(git ls-remote https://github.com/fvarrui/JavaPackager.git refs/heads/devel | cut -c1-7)
+          COMMIT="${{ inputs.javapackager_commit }}"
+          SHA="${COMMIT:0:7}"
           echo "sha=$SHA" >> $GITHUB_OUTPUT
           echo "version=1.7.7-${SHA}" >> $GITHUB_OUTPUT
 
       - name: Check if version exists in GitHub Packages
         id: check
         run: |
-          VERSION="${{ steps.get-sha.outputs.version }}"
+          VERSION="${{ steps.pin-version.outputs.version }}"
           PACKAGE_NAME="io.github.fvarrui.javapackager"
-          # Use org endpoint (Merkel-Games is an organization)
           API_URL="https://api.github.com/orgs/Merkel-Games/packages/maven/${PACKAGE_NAME}/versions"
           HTTP_CODE=$(curl -s -o /tmp/versions.json -w "%{http_code}" \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             "$API_URL")
           if [ "$HTTP_CODE" = "200" ]; then
-            # Check if any version in the list matches our VERSION
             if grep -q "\"name\": \"${VERSION}\"" /tmp/versions.json; then
               echo "exists=true" >> $GITHUB_OUTPUT
-              echo "Version ${VERSION} already exists in GitHub Packages"
+              echo "Version ${VERSION} already exists in GitHub Packages, skipping build"
             else
               echo "exists=false" >> $GITHUB_OUTPUT
               echo "Version ${VERSION} not found, will build and deploy"
             fi
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "API returned HTTP ${HTTP_CODE}, assuming package does not exist or cannot be read, will build and deploy"
+            echo "API returned HTTP ${HTTP_CODE}, assuming package does not exist, will build and deploy"
           fi
 
       - name: Set up JDK 17
@@ -48,16 +62,42 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Clone JavaPackager (devel)
+      - name: Clone JavaPackager and checkout pinned commit
         if: steps.check.outputs.exists != 'true'
         run: |
           git clone https://github.com/fvarrui/JavaPackager.git
           cd JavaPackager
-          git checkout devel
+          # Fetch devel to ensure the commit is available, then pin to exact commit
+          git fetch origin devel
+          git checkout ${{ inputs.javapackager_commit }}
 
-      - name: Build and install to local Maven repo
+      # Patch build.gradle directly so that the version is consistent across
+      # Gradle publishing, the embedded Maven subprocess (generatePluginDescriptor),
+      # and all generated POM/JAR artifacts. Using -Pversion alone does NOT
+      # propagate into the embedded Maven call, causing a version mismatch.
+      - name: Patch version in build.gradle
         if: steps.check.outputs.exists != 'true'
-        run: cd JavaPackager && ./gradlew -Pversion=${{ steps.get-sha.outputs.version }} publishToMavenLocal
+        run: |
+          VERSION="${{ steps.pin-version.outputs.version }}"
+          sed -i "s/^version = '.*'/version = '${VERSION}'/" JavaPackager/build.gradle
+          echo "Patched build.gradle version to: ${VERSION}"
+          grep "^version = " JavaPackager/build.gradle
+
+      - name: Build and publish to Maven Local
+        if: steps.check.outputs.exists != 'true'
+        run: cd JavaPackager && ./gradlew publishToMavenLocal
+
+      # Verify the expected artifacts exist before attempting deploy
+      - name: Verify built artifacts
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          VERSION="${{ steps.pin-version.outputs.version }}"
+          BASE=~/.m2/repository/io/github/fvarrui/javapackager/${VERSION}
+          echo "Checking artifacts in: $BASE"
+          ls -la "$BASE"
+          test -f "$BASE/javapackager-${VERSION}.jar" || (echo "ERROR: JAR not found" && exit 1)
+          test -f "$BASE/javapackager-${VERSION}.pom" || (echo "ERROR: POM not found" && exit 1)
+          echo "All required artifacts found."
 
       - name: Configure Maven for GitHub Packages deploy
         if: steps.check.outputs.exists != 'true'
@@ -80,27 +120,19 @@ jobs:
       - name: Deploy to GitHub Packages
         if: steps.check.outputs.exists != 'true'
         run: |
-          VERSION="${{ steps.get-sha.outputs.version }}"
-          BASE=~/.m2/repository/io/github/fvarrui/javapackager/1.7.7-SNAPSHOT
-          mkdir -p /tmp/deploy
-          cp "$BASE/javapackager-1.7.7-SNAPSHOT.jar" "/tmp/deploy/javapackager-${VERSION}.jar"
-          cp "$BASE/javapackager-1.7.7-SNAPSHOT.pom" "/tmp/deploy/javapackager-${VERSION}.pom"
-          sed -i "s|<version>1.7.7-SNAPSHOT</version>|<version>${VERSION}</version>|" "/tmp/deploy/javapackager-${VERSION}.pom"
+          VERSION="${{ steps.pin-version.outputs.version }}"
+          BASE=~/.m2/repository/io/github/fvarrui/javapackager/${VERSION}
           mvn deploy:deploy-file \
             -DgroupId=io.github.fvarrui \
             -DartifactId=javapackager \
             -Dversion="${VERSION}" \
             -Dpackaging=jar \
-            -Dfile="/tmp/deploy/javapackager-${VERSION}.jar" \
-            -DpomFile="/tmp/deploy/javapackager-${VERSION}.pom" \
+            -Dfile="${BASE}/javapackager-${VERSION}.jar" \
+            -DpomFile="${BASE}/javapackager-${VERSION}.pom" \
             -DrepositoryId=github \
             -Durl=https://maven.pkg.github.com/Merkel-Games/AmerecoLauncher
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set version output
-        id: set-version
-        run: echo "version=${{ steps.get-sha.outputs.version }}" >> $GITHUB_OUTPUT
 
   build-packages:
     needs: build-javapackager
@@ -144,7 +176,7 @@ jobs:
 
       - name: Checkout Repository
         uses: actions/checkout@v4
-        
+
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
@@ -153,26 +185,26 @@ jobs:
 
       - name: Get OS info
         run: mvn enforcer:display-info
-        
+
       - name: List active profiles
         run: mvn help:active-profiles "-Dpackager.javapackager" "-Ddownload-jdk" "-Djavapackager.version=${{ needs.build-javapackager.outputs.version }}"
 
       - name: Build
         run: mvn clean package "-Dpackager.javapackager" "-Ddownload-jdk" "-Djavapackager.version=${{ needs.build-javapackager.outputs.version }}"
-      
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           if-no-files-found: warn
           name: AmerecoLauncher_${{ runner.os }}-${{ runner.arch }}
           path: ${{ matrix.ext }}
-          
+
   build-jar:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        
+
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
@@ -181,20 +213,20 @@ jobs:
 
       - name: Get OS info
         run: mvn enforcer:display-info
-        
+
       - name: List active profiles
         run: mvn help:active-profiles "-Dpackager.jar"
 
       - name: Build
         run: mvn clean package "-Dpackager.jar"
-       
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           if-no-files-found: error
           name: AmerecoLauncher.jar
           path: target/AmerecoLauncher*.jar
-          
+
   release:
     needs: [build-javapackager, build-jar, build-packages]
     if: always()
@@ -206,23 +238,24 @@ jobs:
       - name: Strip version from filenames
         run: |
           find . -name "AmerecoLauncher*" -type f | while read f; do
-            newname=$(echo "$f" | sed -E 's/AmerecoLauncher-[0-9]+\.[0-9]+\.[0-9]+/AmerecoLauncher/')
-            mv "$f" "$newname"
+            newname=$(echo "$f" | sed -E 's/AmerecoLauncher-[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)*/AmerecoLauncher/')
+            if [ "$f" != "$newname" ]; then
+              mv "$f" "$newname"
+            fi
           done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            AmerecoLauncher*/AmerecoLauncher-*.deb
-            AmerecoLauncher*/AmerecoLauncher-*.rpm
-            AmerecoLauncher*/AmerecoLauncher-*.AppImage
-            AmerecoLauncher*/AmerecoLauncher-*.exe
-            AmerecoLauncher*/AmerecoLauncher-*.msi
-            AmerecoLauncher*/AmerecoLauncher-*.pkg
-            AmerecoLauncher*/AmerecoLauncher-*.dmg
+            AmerecoLauncher*/AmerecoLauncher*.deb
+            AmerecoLauncher*/AmerecoLauncher*.rpm
+            AmerecoLauncher*/AmerecoLauncher*.AppImage
+            AmerecoLauncher*/AmerecoLauncher*.exe
+            AmerecoLauncher*/AmerecoLauncher*.msi
+            AmerecoLauncher*/AmerecoLauncher*.pkg
+            AmerecoLauncher*/AmerecoLauncher*.dmg
             AmerecoLauncher*/AmerecoLauncher*.jar
           tag_name: ${{ github.ref_name }}
-#          body: "Automated release of ${{ github.ref_name }}."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
