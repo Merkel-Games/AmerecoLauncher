@@ -83,23 +83,9 @@ jobs:
           VERSION="${{ steps.get-sha.outputs.version }}"
           BASE=~/.m2/repository/io/github/fvarrui/javapackager/1.7.7-SNAPSHOT
           mkdir -p /tmp/deploy
-
-          # Copy and patch POM
+          cp "$BASE/javapackager-1.7.7-SNAPSHOT.jar" "/tmp/deploy/javapackager-${VERSION}.jar"
           cp "$BASE/javapackager-1.7.7-SNAPSHOT.pom" "/tmp/deploy/javapackager-${VERSION}.pom"
           sed -i "s|<version>1.7.7-SNAPSHOT</version>|<version>${VERSION}</version>|" "/tmp/deploy/javapackager-${VERSION}.pom"
-
-          # Extract JAR, patch internal metadata to match new version, and re-package
-          mkdir -p /tmp/jar-work
-          cd /tmp/jar-work
-          cp "$BASE/javapackager-1.7.7-SNAPSHOT.jar" .
-          unzip -q javapackager-1.7.7-SNAPSHOT.jar -d extracted
-          cd extracted
-          find . -type f \( -name "pom.properties" -o -name "plugin.xml" \) \
-            -exec sed -i "s/1.7.7-SNAPSHOT/${VERSION}/g" {} +
-          jar cf "/tmp/deploy/javapackager-${VERSION}.jar" *
-          rm -rf /tmp/jar-work
-
-          # Deploy the patched jar and pom
           mvn deploy:deploy-file \
             -DgroupId=io.github.fvarrui \
             -DartifactId=javapackager \
