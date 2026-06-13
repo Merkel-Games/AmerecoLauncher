@@ -4,7 +4,94 @@ on:
     tags:
       - "v*"
 jobs:
+  build-javapackager:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
+    steps:
+      - name: Get JavaPackager devel HEAD SHA
+        id: get-sha
+        run: |
+          SHA=$(git ls-remote https://github.com/fvarrui/JavaPackager.git refs/heads/devel | cut -c1-7)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "version=1.7.7-${SHA}" >> $GITHUB_OUTPUT
+
+      - name: Check if version exists in GitHub Packages
+        id: check
+        run: |
+          VERSION="${{ steps.get-sha.outputs.version }}"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://maven.pkg.github.com/Merkel-Games/AmerecoLauncher/io/github/fvarrui/javapackager/${VERSION}/javapackager-${VERSION}.pom" 2>&1)
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up JDK 17
+        if: steps.check.outputs.exists != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Clone JavaPackager (devel)
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          git clone https://github.com/fvarrui/JavaPackager.git
+          cd JavaPackager
+          git checkout devel
+
+      - name: Build and install to local Maven repo
+        if: steps.check.outputs.exists != 'true'
+        run: cd JavaPackager && ./gradlew publishToMavenLocal
+
+      - name: Configure Maven for GitHub Packages deploy
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml << 'EOF'
+          <settings>
+            <servers>
+              <server>
+                <id>github</id>
+                <username>${env.GITHUB_ACTOR}</username>
+                <password>${env.GITHUB_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy to GitHub Packages
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          VERSION="${{ steps.get-sha.outputs.version }}"
+          BASE=~/.m2/repository/io/github/fvarrui/javapackager/1.7.7-SNAPSHOT
+          mkdir -p /tmp/deploy
+          cp "$BASE/javapackager-1.7.7-SNAPSHOT.jar" "/tmp/deploy/javapackager-${VERSION}.jar"
+          cp "$BASE/javapackager-1.7.7-SNAPSHOT.pom" "/tmp/deploy/javapackager-${VERSION}.pom"
+          sed -i "s|<version>1.7.7-SNAPSHOT</version>|<version>${VERSION}</version>|" "/tmp/deploy/javapackager-${VERSION}.pom"
+          mvn deploy:deploy-file \
+            -DgroupId=io.github.fvarrui \
+            -DartifactId=javapackager \
+            -Dversion="${VERSION}" \
+            -Dpackaging=jar \
+            -Dfile="/tmp/deploy/javapackager-${VERSION}.jar" \
+            -DpomFile="/tmp/deploy/javapackager-${VERSION}.pom" \
+            -DrepositoryId=github \
+            -Durl=https://maven.pkg.github.com/Merkel-Games/AmerecoLauncher
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set version output
+        id: set-version
+        run: echo "version=${{ steps.get-sha.outputs.version }}" >> $GITHUB_OUTPUT
+
   build-packages:
+    needs: build-javapackager
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -24,11 +111,24 @@ jobs:
             ext: |
               target/AmerecoLauncher*.pkg
               target/AmerecoLauncher*.dmg
-          # - os: macos-latest-large
-          #   ext: |
-          #     target/AmerecoLauncher*.pkg
-          #     target/AmerecoLauncher*.dmg
     steps:
+      - name: Configure Maven settings for GitHub Packages
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml << 'EOF'
+          <settings>
+            <servers>
+              <server>
+                <id>github</id>
+                <username>${env.GITHUB_ACTOR}</username>
+                <password>${env.GITHUB_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Checkout Repository
         uses: actions/checkout@v4
         
@@ -42,10 +142,10 @@ jobs:
         run: mvn enforcer:display-info
         
       - name: List active profiles
-        run: mvn help:active-profiles "-Dpackager.javapackager" "-Ddownload-jdk"
+        run: mvn help:active-profiles "-Dpackager.javapackager" "-Ddownload-jdk" "-Djavapackager.version=${{ needs.build-javapackager.outputs.version }}"
 
       - name: Build
-        run: mvn clean package "-Dpackager.javapackager" "-Ddownload-jdk"
+        run: mvn clean package "-Dpackager.javapackager" "-Ddownload-jdk" "-Djavapackager.version=${{ needs.build-javapackager.outputs.version }}"
       
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -74,7 +174,7 @@ jobs:
 
       - name: Build
         run: mvn clean package "-Dpackager.jar"
-      
+       
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -83,7 +183,7 @@ jobs:
           path: target/AmerecoLauncher*.jar
           
   release:
-    needs: [build-jar, build-packages]
+    needs: [build-javapackager, build-jar, build-packages]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -102,8 +202,12 @@ jobs:
         with:
           files: |
             AmerecoLauncher*/AmerecoLauncher-*.deb
+            AmerecoLauncher*/AmerecoLauncher-*.rpm
+            AmerecoLauncher*/AmerecoLauncher-*.AppImage
             AmerecoLauncher*/AmerecoLauncher-*.exe
+            AmerecoLauncher*/AmerecoLauncher-*.msi
             AmerecoLauncher*/AmerecoLauncher-*.pkg
+            AmerecoLauncher*/AmerecoLauncher-*.dmg
             AmerecoLauncher*/AmerecoLauncher*.jar
           tag_name: ${{ github.ref_name }}
 #          body: "Automated release of ${{ github.ref_name }}."
