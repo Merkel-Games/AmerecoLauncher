@@ -110,11 +110,11 @@ public class MainController {
         showProgress();
         new Thread(() -> {
             try {
-                if (minecraftDownloader.checkUpdates("1.20.1"))
+                if (minecraftDownloader.checkUpdates(Config.properties.getProperty("minecraftVersion")))
                     updateNeeded.add(UpdateNeeded.MINECRAFT);
-                if (fabricDownloader.checkUpdates("1.20.1-fabric-0.19.1"))
+                if (fabricDownloader.checkUpdates(Config.properties.getProperty("fabricVersion")))
                     updateNeeded.add(UpdateNeeded.FABRIC);
-                if (authlibInjectorDownloader.checkUpdates("authlib-injector-1.2.7"))
+                if (authlibInjectorDownloader.checkUpdates(Config.properties.getProperty("authlibInjectorVersion")))
                     updateNeeded.add(UpdateNeeded.AUTHLIB_INJECTOR);
                 if (httpSync.checkUpdates("")) 
                     updateNeeded.add(UpdateNeeded.HTTPSYNC);
@@ -148,11 +148,11 @@ public class MainController {
         new Thread(() -> {
             try {
                 if (updateNeeded.contains(UpdateNeeded.MINECRAFT))
-                    minecraftDownloader.download("1.20.1");
+                    minecraftDownloader.download(Config.properties.getProperty("minecraftVersion"));
                 if (updateNeeded.contains(UpdateNeeded.FABRIC))
-                    fabricDownloader.download("1.20.1-fabric-0.19.1");
+                    fabricDownloader.download(Config.properties.getProperty("fabricVersion"));
                 if (updateNeeded.contains(UpdateNeeded.AUTHLIB_INJECTOR))
-                    authlibInjectorDownloader.download("authlib-injector-1.2.7");
+                    authlibInjectorDownloader.download(Config.properties.getProperty("authlibInjectorVersion"));
                 if (updateNeeded.contains(UpdateNeeded.HTTPSYNC))
                     httpSync.download("");
                 
@@ -238,9 +238,9 @@ public class MainController {
                     minecraftLauncher.clientId = config.clientId;
 
                     Loader loader = new Loader(minecraftLauncher);
-                    loader.loadPatch("authlib-injector-1.2.7");
-                    loader.loadFull("1.20.1");
-                    loader.loadPatch("1.20.1-fabric-0.19.1");
+                    loader.loadPatch(Config.properties.getProperty("authlibInjectorVersion"));
+                    loader.loadFull(Config.properties.getProperty("minecraftVersion"));
+                    loader.loadPatch(Config.properties.getProperty("fabricVersion"));
                     minecraftLauncher.launch();
                 } catch (Exception exc) {
                     exc.printStackTrace();
