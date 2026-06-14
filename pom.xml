@@ -297,6 +297,7 @@
                                     <!-- mandatory -->
                                     <mainClass>ru.amereco.amerecolauncher.Main</mainClass>
                                     <!-- optional -->
+                                    <name>AmerecoLauncher</name>
                                     <bundleJre>true</bundleJre>
                                     <generateInstaller>true</generateInstaller>
                                     <platform>${project.platform}</platform>
