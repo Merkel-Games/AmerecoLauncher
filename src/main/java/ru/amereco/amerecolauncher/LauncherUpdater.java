@@ -81,10 +81,18 @@ public class LauncherUpdater extends Downloader {
         }
     }
 
+    // ─── URL страницы релиза для открытия в браузере ────────────────────────────
+
+    private static final String RELEASES_PAGE_URL =
+            "https://github.com/Merkel-Games/AmerecoLauncher/releases/latest";
+
     // ─── Поля ───────────────────────────────────────────────────────────────────
 
     private final InstallerType installerType;
     private final boolean updateDisabled;
+
+    /** Версия, найденная при последнем вызове {@link #checkUpdates()}. */
+    private String latestVersion = null;
 
     // ─── Конструктор ────────────────────────────────────────────────────────────
 
@@ -112,6 +120,7 @@ public class LauncherUpdater extends Downloader {
         updateStage("Проверка обновлений лаунчера...");
 
         String latestVersion = fetchLatestVersion();
+        this.latestVersion = latestVersion;
         String currentVersion = currentVersion();
 
         boolean hasUpdate = isNewer(latestVersion, currentVersion);
@@ -224,7 +233,67 @@ public class LauncherUpdater extends Downloader {
     }
 
     /**
-     * Полный цикл: проверка → диалог → загрузка.
+     * «Холостой» вариант обновления: лаунчер <b>не скачивает</b> установщик сам.
+     *
+     * <p>Показывает диалог с предложением обновиться. При согласии:
+     * <ol>
+     *   <li>Открывает страницу релиза в системном браузере — браузер автоматически
+     *       начнёт скачивание нужного установщика (прямая ссылка на файл).</li>
+     *   <li>Закрывает лаунчер через {@code System.exit(0)}.</li>
+     * </ol>
+     *
+     * <p>Удобно использовать когда встроенная загрузка нежелательна или недоступна.
+     * Метод потокобезопасен.
+     */
+    public void askToUpdateBrowser() {
+        Platform.runLater(() -> {
+            String versionInfo = latestVersion != null ? " (" + latestVersion + ")" : "";
+            Alert alert = new Alert(
+                    Alert.AlertType.CONFIRMATION,
+                    "Доступно обновление лаунчера" + versionInfo + "!\n" +
+                    "Открыть страницу загрузки в браузере?",
+                    ButtonType.NO,
+                    ButtonType.YES
+            );
+            alert.setTitle("Обновление AmerecoLauncher");
+            alert.setHeaderText(null);
+
+            alert.showAndWait().ifPresent(btn -> {
+                if (btn == ButtonType.YES) {
+                    openDownloadInBrowser();
+                    System.exit(0);
+                }
+            });
+        });
+    }
+
+    /**
+     * Открывает прямую ссылку на установщик для текущей платформы
+     * в системном браузере по умолчанию.
+     *
+     * <p>Браузер начнёт скачивание автоматически — GitHub отдаёт файл
+     * по прямой ссылке без редиректа на страницу.
+     */
+    public void openDownloadInBrowser() {
+        String url = String.format(DOWNLOAD_URL_TEMPLATE, installerType.ext);
+        try {
+            String os = System.getProperty("os.name", "").toLowerCase();
+            ProcessBuilder pb;
+            if (os.contains("win")) {
+                pb = new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url);
+            } else if (os.contains("mac") || os.contains("darwin")) {
+                pb = new ProcessBuilder("open", url);
+            } else {
+                pb = new ProcessBuilder("xdg-open", url);
+            }
+            pb.start();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Полный цикл: проверка → диалог → загрузка (встроенная).
      * Запускается в отдельном потоке, безопасно вызывать из FX-потока.
      */
     public void checkAndUpdate() {
@@ -240,6 +309,33 @@ public class LauncherUpdater extends Downloader {
                 // Не ломаем лаунчер из-за ошибки проверки обновлений
             }
         }, "launcher-update-check").start();
+    }
+
+    /**
+     * Полный цикл (холостой режим): проверка → диалог → браузер → закрытие.
+     * Запускается в отдельном потоке, безопасно вызывать из FX-потока.
+     *
+     * <p>Используйте этот метод если хотите, чтобы лаунчер <b>не скачивал</b>
+     * установщик самостоятельно, а перенаправлял пользователя в браузер.
+     */
+    public void checkAndUpdateBrowser() {
+        if (updateDisabled) return;
+
+        new Thread(() -> {
+            try {
+                if (checkUpdates()) {
+                    askToUpdateBrowser();
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }, "launcher-update-check-browser").start();
+    }
+
+    /** Возвращает последнюю версию, найденную при последнем вызове {@link #checkUpdates()},
+     *  или {@code null} если проверка ещё не выполнялась. */
+    public String getLatestVersion() {
+        return latestVersion;
     }
 
     /** Возвращает тип установщика, выбранный для текущей платформы. */
