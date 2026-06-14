@@ -6,6 +6,7 @@ import javafx.application.Platform;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
+import javafx.scene.input.KeyCode;
 
 public class AuthController {
     Config config = Config.get();
@@ -32,6 +33,24 @@ public class AuthController {
                 }
             });
         }
+
+        loginInput.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ENTER) {
+                onLoginPressed();
+            }
+        });
+
+        passwordInput.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ENTER) {
+                onLoginPressed();
+            }
+        });
+
+        primaryButton.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ENTER) {
+                onLoginPressed();
+            }
+        });
     }
 
     @FXML
