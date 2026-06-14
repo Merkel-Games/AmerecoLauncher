@@ -54,14 +54,14 @@
                         <Font size="20.0" />
                      </font>
                   </Label>
-                  <PasswordField fx:id="passwordInput" style="-fx-font-size: 10px;" styleClass="ninetile-input" GridPane.columnIndex="1" GridPane.rowIndex="1">
-                     <font>
-                        <Font size="10.0" />
-                     </font></PasswordField>
                   <TextField fx:id="loginInput" style="-fx-font-size: 10px;" styleClass="ninetile-input" GridPane.columnIndex="1">
                      <font>
                         <Font size="10.0" />
                      </font></TextField>
+                  <PasswordField fx:id="passwordInput" style="-fx-font-size: 10px;" styleClass="ninetile-input" GridPane.columnIndex="1" GridPane.rowIndex="1">
+                     <font>
+                        <Font size="10.0" />
+                     </font></PasswordField>
                </children>
             </GridPane>
             <Button fx:id="primaryButton" onAction="#onLoginPressed" style="-fx-font-size: 13;" styleClass="ninetile-button" text="Войти" textFill="WHITE">

@@ -21,7 +21,8 @@
     -fx-background-color: transparent;
 }
 
-.ninetile-button:hover {
+.ninetile-button:hover,
+.ninetile-button:focused {
     -fx-border-image-source: url("images/button_hover.png");
 }
 
@@ -51,10 +52,24 @@
     -fx-control-inner-background: transparent;
 }
 
-.ninetile-input:hover {
+.ninetile-input:hover,
+.ninetile-input:focused {
     -fx-border-image-source: url("images/input_hover.png");
 }
 
 .ninetile-input:selected {
     -fx-border-image-source: url("images/input_selected.png");
+}
+
+/* CheckBox focus style */
+.check-box:focused .box {
+    -fx-border-image-source: url("images/input_hover.png");
+}
+
+/* Remove default JavaFX focus ring from all controls that use custom border images */
+.ninetile-button:focused,
+.ninetile-input:focused,
+.check-box:focused {
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
 }
