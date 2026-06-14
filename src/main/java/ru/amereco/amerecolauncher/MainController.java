@@ -22,11 +22,12 @@ import ru.amereco.amerecolauncher.minecraft.Loader;
 import ru.amereco.amerecolauncher.minecraft.MinecraftDownloader;
 import ru.amereco.amerecolauncher.minecraft.fabric.FabricDownloader;
 import ru.amereco.amerecolauncher.utils.ProgressData;
+import ru.amereco.amerecolauncher.LauncherUpdater;
 import ru.amereco.amerecolauncher.minecraft.authlibinjector.AuthlibInjectorDownloader;
 
 public class MainController {
     public enum UpdateNeeded {
-        MINECRAFT, FABRIC, AUTHLIB_INJECTOR, HTTPSYNC;
+        MINECRAFT, FABRIC, AUTHLIB_INJECTOR, HTTPSYNC, LAUNCHER;
         public static final EnumSet<UpdateNeeded> ALL_OPTS = EnumSet.allOf(UpdateNeeded.class);
     }
     
@@ -35,6 +36,7 @@ public class MainController {
     private MinecraftDownloader minecraftDownloader;
     private FabricDownloader fabricDownloader;
     private AuthlibInjectorDownloader authlibInjectorDownloader;
+    private LauncherUpdater launcherUpdater;
 
     private EnumSet<UpdateNeeded> updateNeeded = EnumSet.noneOf(UpdateNeeded.class);
     
@@ -72,6 +74,9 @@ public class MainController {
         Path configPath = Path.of(config.mainDir, "instances/rpcraft/rpcraft.json");
         httpSync = new HTTPSync(configUrl, baseUrl, configPath, basePath, 5000, 3000);
         httpSync.setOnProgress(this::handleProgressUpdate);
+
+        launcherUpdater = new LauncherUpdater();
+        launcherUpdater.setOnProgress(this::handleProgressUpdate);
         
         hideProgress();
         
@@ -118,6 +123,8 @@ public class MainController {
                     updateNeeded.add(UpdateNeeded.AUTHLIB_INJECTOR);
                 if (httpSync.checkUpdates("")) 
                     updateNeeded.add(UpdateNeeded.HTTPSYNC);
+                if (launcherUpdater.checkUpdates())
+                    updateNeeded.add(UpdateNeeded.LAUNCHER);
                                      
                 javafx.application.Platform.runLater(() -> {
                     hideProgress();
@@ -147,6 +154,11 @@ public class MainController {
         showProgress();
         new Thread(() -> {
             try {
+                // Обновление лаунчера — первым, так как System.exit(0) убьёт процесс
+                if (updateNeeded.contains(UpdateNeeded.LAUNCHER)) {
+                    launcherUpdater.askToUpdate();
+                    return;
+                }
                 if (updateNeeded.contains(UpdateNeeded.MINECRAFT))
                     minecraftDownloader.download(Config.properties.getProperty("minecraftVersion"));
                 if (updateNeeded.contains(UpdateNeeded.FABRIC))
