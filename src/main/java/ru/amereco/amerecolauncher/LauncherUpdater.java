@@ -163,11 +163,17 @@ public class LauncherUpdater extends Downloader {
         // Права на выполнение для Unix-форматов
         grantExecutePermission(installer);
 
-        launchInstaller(installer);
+        Process process = launchInstaller(installer);
 
-        // Даём установщику время стартовать перед выходом
-        Thread.sleep(1500);
-        System.exit(0);
+        // Ждём подтверждения, что процесс установщика запущен (до 5 секунд)
+        for (int i = 0; i < 50; i++) {
+            if (process.isAlive()) {
+                System.exit(0);
+            }
+            Thread.sleep(100);
+        }
+        // Процесс не стартовал за 5 секунд или сразу завершился — выходим с ошибкой
+        System.exit(1);
     }
 
     /**
@@ -353,7 +359,7 @@ public class LauncherUpdater extends Downloader {
     /**
      * Запускает скачанный установщик нативной командой для каждого формата.
      */
-    private void launchInstaller(Path installer) throws IOException {
+    private Process launchInstaller(Path installer) throws IOException {
         String path = installer.toAbsolutePath().toString();
         ProcessBuilder pb;
 
@@ -404,7 +410,7 @@ public class LauncherUpdater extends Downloader {
         }
 
         pb.redirectErrorStream(true);
-        pb.start(); // процесс запускается независимо; текущий завершается в download()
+        return pb.start();
     }
 
     /**
