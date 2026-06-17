@@ -14,7 +14,7 @@
 
 <StackPane fx:id="root" minHeight="500.0" minWidth="500.0" prefHeight="563.0" prefWidth="615.0" stylesheets="@style.css" xmlns="http://javafx.com/javafx/25" xmlns:fx="http://javafx.com/fxml/1" fx:controller="ru.amereco.amerecolauncher.MainController">
     <children>
-      <AnchorPane mouseTransparent="true" prefHeight="200.0" prefWidth="200.0">
+      <AnchorPane prefHeight="200.0" prefWidth="200.0">
          <children>
             <Button fx:id="settingsBtn" layoutX="5.0" layoutY="522.0" maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" onAction="#switchToSettings" prefHeight="35.0" prefWidth="35.0" style="-fx-font-size: 20;" styleClass="ninetile-button" text="Настройки" textAlignment="CENTER" AnchorPane.bottomAnchor="85.0" AnchorPane.rightAnchor="5.0">
                <font>
