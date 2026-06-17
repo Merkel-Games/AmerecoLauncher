@@ -64,6 +64,9 @@ public class Config {
         this.downloadThreadsCount = Runtime.getRuntime().availableProcessors();
         this.features = new HashMap<>();
         this.features.put("is_quick_play_multiplayer", true);
+        this.features.put("profile_rpcraft", true);
+        this.features.put("profile_rpcraft_admin", false);
+        this.features.put("profile_rpcraft_ultra", false);
     }
 
     public static Config get() {

@@ -1,7 +1,3 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/javafx/FXMLController.java to edit this template
- */
 package ru.amereco.amerecolauncher;
 
 import java.io.File;
@@ -30,15 +26,24 @@ public class SettingsController implements Initializable {
 
     @FXML private TextField mainDirInput;
     @FXML private CheckBox quickPlayCheckbox;
+    @FXML private CheckBox rpcraftCheckbox;
+    @FXML private CheckBox rpcraftAdminCheckbox;
+    @FXML private CheckBox rpcraftUltraCheckbox;
 
     private void load() {
         mainDirInput.setText(config.mainDir);
         quickPlayCheckbox.setSelected(config.features.getOrDefault("is_quick_play_multiplayer", true));
+        rpcraftCheckbox.setSelected(config.features.getOrDefault("profile_rpcraft", true));
+        rpcraftAdminCheckbox.setSelected(config.features.getOrDefault("profile_rpcraft_admin", false));
+        rpcraftUltraCheckbox.setSelected(config.features.getOrDefault("profile_rpcraft_ultra", false));
     }
 
     private void save() {
         config.mainDir = mainDirInput.getText();
         config.features.put("is_quick_play_multiplayer", quickPlayCheckbox.isSelected());
+        config.features.put("profile_rpcraft", rpcraftCheckbox.isSelected());
+        config.features.put("profile_rpcraft_admin", rpcraftAdminCheckbox.isSelected());
+        config.features.put("profile_rpcraft_ultra", rpcraftUltraCheckbox.isSelected());
     }
 
     /**
@@ -53,6 +58,7 @@ public class SettingsController implements Initializable {
     @FXML
     private void switchToMain() throws IOException {
         save();
+        config.save();
         App.setRoot("main");
     }
     

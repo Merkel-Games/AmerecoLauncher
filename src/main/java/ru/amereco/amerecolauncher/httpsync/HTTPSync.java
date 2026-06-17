@@ -202,6 +202,27 @@ public class HTTPSync extends Downloader {
         downloadFile(configURL, configPath.toString());
     }
 
+    /**
+     * Purges all files listed in the local index and deletes the index file itself.
+     * Used when a profile is disabled — removes its overlay files without network access.
+     */
+    public void purge() throws IOException, InterruptedException {
+        updateStage("Очистка файлов отключённого профиля...");
+        JSONObject localConfig = getLocalConfig(configPath);
+        JSONArray files = localConfig.getJSONArray("files");
+        int total = files.length();
+        progress = 0;
+        maxProgress = total;
+        for (int i = 0; i < total; i++) {
+            JSONObject file = files.getJSONObject(i);
+            String path = file.getString("path");
+            updateStepAndIncProgress(path);
+            Files.deleteIfExists(basePath.resolve(path));
+        }
+        Files.deleteIfExists(configPath);
+        updateStage("Файлы профиля удалены");
+    }
+
     public int getRetryDelay() {
         return retryDelay;
     }

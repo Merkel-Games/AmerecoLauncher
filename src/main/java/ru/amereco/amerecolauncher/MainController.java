@@ -7,7 +7,9 @@ import javafx.application.Platform;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.List;
 
 import ru.amereco.amerecolauncher.httpsync.HTTPSync;
 import ru.amereco.amerecolauncher.minecraft.MinecraftLauncher;
@@ -32,7 +34,6 @@ public class MainController {
     }
     
     private final Config config = Config.get();
-    private HTTPSync httpSync;
     private MinecraftDownloader minecraftDownloader;
     private FabricDownloader fabricDownloader;
     private AuthlibInjectorDownloader authlibInjectorDownloader;
@@ -51,6 +52,52 @@ public class MainController {
     @FXML private Label progressLabel;
     @FXML private ImageView backgroundImage;
 
+    /**
+     * Returns the list of active profile names based on config features.
+     * Base profile (rpcraft) is always first, then overlays in order.
+     */
+    private List<String> getActiveProfiles() {
+        List<String> profiles = new ArrayList<>();
+        if (config.features.getOrDefault("profile_rpcraft", true))
+            profiles.add("rpcraft");
+        if (config.features.getOrDefault("profile_rpcraft_admin", false))
+            profiles.add("rpcraft-admin");
+        if (config.features.getOrDefault("profile_rpcraft_ultra", false))
+            profiles.add("rpcraft-ultra");
+        return profiles;
+    }
+
+    /**
+     * Creates an HTTPSync instance for the given profile name.
+     */
+    private HTTPSync createSyncForProfile(String profileName) {
+        String baseUrl = "https://amereco.ru/client_dist/instances/" + profileName + "/";
+        String configUrl = "https://amereco.ru/client_dist/instances/" + profileName + "/" + profileName + ".json";
+        Path basePath = Path.of(config.mainDir, "instances/rpcraft/");
+        Path configPath = Path.of(config.mainDir, "instances/rpcraft/" + profileName + ".json");
+        HTTPSync sync = new HTTPSync(configUrl, baseUrl, configPath, basePath, 5000, 3000);
+        sync.setOnProgress(this::handleProgressUpdate);
+        return sync;
+    }
+
+    /**
+     * Purges files of overlay profiles that are no longer active.
+     * Runs on every checkUpdates, so disabling a profile triggers cleanup immediately.
+     */
+    private void purgeDisabledProfiles() throws IOException, InterruptedException {
+        List<String> activeProfiles = getActiveProfiles();
+        String[] knownOverlayProfiles = {"rpcraft-admin", "rpcraft-ultra"};
+        for (String overlay : knownOverlayProfiles) {
+            if (!activeProfiles.contains(overlay)) {
+                Path indexFile = Path.of(config.mainDir, "instances/rpcraft/" + overlay + ".json");
+                if (Files.exists(indexFile)) {
+                    HTTPSync sync = createSyncForProfile(overlay);
+                    sync.purge();
+                }
+            }
+        }
+    }
+
     @FXML
     public void initialize() {
         try {
@@ -66,14 +113,6 @@ public class MainController {
         fabricDownloader.setOnProgress(this::handleProgressUpdate);
         authlibInjectorDownloader = new AuthlibInjectorDownloader();
         authlibInjectorDownloader.setOnProgress(this::handleProgressUpdate);
-        
-        // Initialize HTTPSync
-        String baseUrl = "https://lanode.augmeneco.ru/rpcraft_dist/instances/rpcraft/";
-        String configUrl = "https://lanode.augmeneco.ru/rpcraft_dist/instances/rpcraft/rpcraft.json";
-        Path basePath = Path.of(config.mainDir, "instances/rpcraft/");
-        Path configPath = Path.of(config.mainDir, "instances/rpcraft/rpcraft.json");
-        httpSync = new HTTPSync(configUrl, baseUrl, configPath, basePath, 5000, 3000);
-        httpSync.setOnProgress(this::handleProgressUpdate);
 
         launcherUpdater = new LauncherUpdater();
         launcherUpdater.setOnProgress(this::handleProgressUpdate);
@@ -121,10 +160,22 @@ public class MainController {
                     updateNeeded.add(UpdateNeeded.FABRIC);
                 if (authlibInjectorDownloader.checkUpdates(Config.properties.getProperty("authlibInjectorVersion")))
                     updateNeeded.add(UpdateNeeded.AUTHLIB_INJECTOR);
-                if (httpSync.checkUpdates("")) 
-                    updateNeeded.add(UpdateNeeded.HTTPSYNC);
-                if (launcherUpdater.checkUpdates())
-                    updateNeeded.add(UpdateNeeded.LAUNCHER);
+                
+                // Purge disabled overlay profiles before checking updates
+                // This triggers cleanup immediately when user disables a profile in settings
+                purgeDisabledProfiles();
+
+                // Check all active profiles for updates
+                for (String profileName : getActiveProfiles()) {
+                    HTTPSync sync = createSyncForProfile(profileName);
+                    if (sync.checkUpdates("")) {
+                        updateNeeded.add(UpdateNeeded.HTTPSYNC);
+                        break; // one update is enough to trigger the update button
+                    }
+                }
+                
+                // if (launcherUpdater.checkUpdates())
+                    // updateNeeded.add(UpdateNeeded.LAUNCHER);
                                      
                 javafx.application.Platform.runLater(() -> {
                     hideProgress();
@@ -165,8 +216,15 @@ public class MainController {
                     fabricDownloader.download(Config.properties.getProperty("fabricVersion"));
                 if (updateNeeded.contains(UpdateNeeded.AUTHLIB_INJECTOR))
                     authlibInjectorDownloader.download(Config.properties.getProperty("authlibInjectorVersion"));
-                if (updateNeeded.contains(UpdateNeeded.HTTPSYNC))
-                    httpSync.download("");
+                
+                // Sync profiles in order: base first, then overlays
+                // (purge of disabled profiles is done in checkUpdates)
+                if (updateNeeded.contains(UpdateNeeded.HTTPSYNC)) {
+                    for (String profileName : getActiveProfiles()) {
+                        HTTPSync sync = createSyncForProfile(profileName);
+                        sync.download("");
+                    }
+                }
                 
                 javafx.application.Platform.runLater(() -> {
                     hideProgress();
