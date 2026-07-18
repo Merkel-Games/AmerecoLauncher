@@ -18,22 +18,6 @@ public class AuthController {
 
     @FXML
     public void initialize() {
-        if (config.accessToken != null && !config.accessToken.isEmpty()) {
-            try {
-                AuthServer auth = new AuthServer();
-                auth.validate(config.accessToken, config.clientId);
-            } catch (Exception e) {
-                return;
-            }
-            Platform.runLater(() -> {
-                try {
-                    switchToMain();
-                } catch (Exception exc) {
-                    exc.printStackTrace();
-                }
-            });
-        }
-
         loginInput.setOnKeyPressed(event -> {
             if (event.getCode() == KeyCode.ENTER) {
                 onLoginPressed();
@@ -51,10 +35,51 @@ public class AuthController {
                 onLoginPressed();
             }
         });
+
+        // Проверку токена выполняем в фоне, а не на FX-потоке, иначе медленный/зависший
+        // сервер подвешивает весь UI при запуске (окно не появляется).
+        if (config.accessToken != null && !config.accessToken.isEmpty()) {
+            new Thread(() -> {
+                try {
+                    new AuthServer().validate(config.accessToken, config.clientId);
+                    Platform.runLater(this::trySwitchToMain);
+                } catch (AuthServer.YggdrasilException e) {
+                    // Токен невалиден/просрочен — пробуем refresh, иначе уводим на логин.
+                    try {
+                        var resp = new AuthServer().refresh(config.accessToken, config.clientId, null);
+                        config.accessToken = resp.accessToken();
+                        if (resp.selectedProfile() != null) {
+                            config.uuid = resp.selectedProfile().id();
+                            config.userName = resp.selectedProfile().name();
+                        }
+                        config.save();
+                        Platform.runLater(this::trySwitchToMain);
+                    } catch (Exception ex) {
+                        config.accessToken = "";
+                        config.uuid = "";
+                        config.save();
+                        Platform.runLater(() -> showError("Сессия истекла, войдите снова"));
+                    }
+                } catch (Exception e) {
+                    // Сетевая ошибка — НЕ чистим токен, показываем сообщение.
+                    Platform.runLater(() -> showError("Ошибка соединения: " + e.getMessage()));
+                }
+            }, "auth-validate").start();
+        }
+    }
+
+    private void trySwitchToMain() {
+        try {
+            switchToMain();
+        } catch (Exception exc) {
+            exc.printStackTrace();
+        }
     }
 
     @FXML
     private void onLoginPressed() {
+        if (primaryButton.isDisable()) return; // защита от повторной отправки (в т.ч. по ENTER)
+
         String username = loginInput.getText().trim();
         String password = passwordInput.getText();
 
@@ -75,6 +100,8 @@ public class AuthController {
                     config.accessToken = resp.accessToken();
                     config.uuid = resp.selectedProfile() != null
                             ? resp.selectedProfile().id() : null;
+                    config.userName = resp.selectedProfile() != null
+                            ? resp.selectedProfile().name() : null;
                     config.save();
 
                     try {

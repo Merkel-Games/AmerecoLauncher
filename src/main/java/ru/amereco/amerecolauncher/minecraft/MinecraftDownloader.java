@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import ru.amereco.amerecolauncher.Config;
+import ru.amereco.amerecolauncher.minecraft.models.Library;
 import ru.amereco.amerecolauncher.minecraft.models.Version;
 import ru.amereco.amerecolauncher.minecraft.models.VersionManifest;
 import ru.amereco.amerecolauncher.minecraft.models.AssetIndex;
@@ -21,19 +22,19 @@ import ru.amereco.amerecolauncher.minecraft.models.AssetIndex;
  */
 public class MinecraftDownloader extends Downloader {
     private static final String VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest.json";
-    
+
     public VersionManifest getVersionManifest() throws IOException, InterruptedException {
-        String response = httpGet(URI.create(VERSION_MANIFEST_URL)); 
+        String response = httpGet(URI.create(VERSION_MANIFEST_URL));
         return gson.fromJson(response, VersionManifest.class);
     }
-    
-    public Version getVersion(URI versionUrl) throws IOException, InterruptedException {       
-        String response = httpGet(versionUrl); 
+
+    public Version getVersion(URI versionUrl) throws IOException, InterruptedException {
+        String response = httpGet(versionUrl);
         return gson.fromJson(response, Version.class);
     }
-    
-    public AssetIndex getAssetIndex(URI assetIndexUrl) throws IOException, InterruptedException {       
-        String response = httpGet(assetIndexUrl); 
+
+    public AssetIndex getAssetIndex(URI assetIndexUrl) throws IOException, InterruptedException {
+        String response = httpGet(assetIndexUrl);
         return gson.fromJson(response, AssetIndex.class);
     }
 
@@ -42,36 +43,37 @@ public class MinecraftDownloader extends Downloader {
         var versionManifest = getVersionManifest();
         return checkUpdates(versionManifest.latest().release());
     }
-    
+
     @Override
     public boolean checkUpdates(String versionId) throws IOException, InterruptedException {
         Path mainDir = Path.of(Config.get().mainDir);
         return !Files.exists(mainDir.resolve("versions").resolve(versionId).resolve(versionId+".json"));
     }
-    
+
     @Override
     public void download() throws IOException, InterruptedException {
         var versionManifest = getVersionManifest();
         download(versionManifest.latest().release());
     }
-    
+
     @Override
     public void download(String versionId) throws IOException, InterruptedException {
         updateStage("Загрузка Minecraft: библиотеки");
-        maxProgress = 1;
-        progress = 0;
+        resetProgress(1);
         updateStepAndIncProgress(versionId+".json");
-        
+
         String mainDir = Config.get().mainDir;
-        
+
         var versionManifest = getVersionManifest();
-        var versionInfo = versionManifest.versions().stream().filter(e -> e.id().equals(versionId)).findFirst().get();
-        
+        var versionInfo = versionManifest.versions().stream()
+                .filter(e -> e.id().equals(versionId))
+                .findFirst()
+                .orElseThrow(() -> new IOException("Minecraft version not found: " + versionId));
+
         var version = getVersion(versionInfo.url());
-        
-        maxProgress = version.libraries().size()+3;
-        progress = 0;
-        
+
+        resetProgress(version.libraries().size()+3);
+
         Path versionPath = Path.of(mainDir, "versions", versionInfo.id(), versionInfo.id()+".json");
         setFailDownloadHandler(((t) -> {
             try {
@@ -82,37 +84,71 @@ public class MinecraftDownloader extends Downloader {
             } catch (Exception exc) {
             }
         }));
-        
-//        updateStepAndIncProgress(versionInfo.id()+".json");
+
         downloadToPathInThread(versionInfo.url(), versionPath);
-        
-//        updateStepAndIncProgress(versionId+".jar");
-        downloadToPathInThread(version.downloads().client().url(), Path.of(mainDir, "versions", versionId, versionId+".jar"));
-        
+
+        var client = version.downloads().client();
+        downloadToPathInThread(client.url(),
+                Path.of(mainDir, "versions", versionId, versionId+".jar"),
+                client.sha1(), client.size());
+
         for (var library : version.libraries()) {
-            if (library.shouldUse()) {
+            if (!library.shouldUse()) continue;
+
+            if (library.downloads() != null && library.downloads().artifact() != null) {
+                var art = library.downloads().artifact();
                 updateStepAndIncProgress(library.name());
-                downloadToPathInThread(library.downloads().artifact().url(), Path.of(mainDir, "libraries", library.downloads().artifact().path()));
+                downloadToPathInThread(art.url(),
+                        Path.of(mainDir, "libraries", art.path()),
+                        art.sha1(), art.size() == null ? -1 : art.size());
+            }
+
+            // Нативы старого формата (classifier-артефакты для текущей ОС/арх)
+            if (library.natives() != null
+                    && library.downloads() != null
+                    && library.downloads().classifiers() != null) {
+                String key = library.natives().get(osToken());
+                if (key != null) {
+                    key = key.replace("${arch}", archBits());
+                    Library.Downloads.LibraryDownload cl = library.downloads().classifiers().get(key);
+                    if (cl != null && cl.url() != null) {
+                        downloadToPathInThread(cl.url(),
+                                Path.of(mainDir, "libraries", cl.path()),
+                                cl.sha1(), cl.size() == null ? -1 : cl.size());
+                    }
+                }
             }
         }
-        
+
         updateStage("Загрузка Minecraft: ассеты");
-//        updateStepAndIncProgress(version.assetIndex().id()+".json");
-        downloadToPathInThread(version.assetIndex().url(), Path.of(mainDir, "assets", "indexes", version.assetIndex().id()+".json"));
-        
-        var assetIndex = getAssetIndex(version.assetIndex().url());
-        
-        maxProgress = assetIndex.objects().size();
-        progress = 0;
-        
+        var assetIdx = version.assetIndex();
+        downloadToPathInThread(assetIdx.url(),
+                Path.of(mainDir, "assets", "indexes", assetIdx.id()+".json"),
+                assetIdx.sha1(), assetIdx.size());
+
+        var assetIndex = getAssetIndex(assetIdx.url());
+
+        resetProgress(assetIndex.objects().size());
+
         for (Map.Entry<String, AssetIndex.Asset> entry : assetIndex.objects().entrySet()) {
-//            updateStepAndIncProgress(entry.getKey());
             var hash = entry.getValue().hash();
             var folderName = hash.substring(0, 2);
-            downloadToPathInThread(URI.create("https://resources.download.minecraft.net/"+folderName+"/"+hash), 
-                           Path.of(mainDir, "assets", "objects", folderName, hash));
+            downloadToPathInThread(URI.create("https://resources.download.minecraft.net/"+folderName+"/"+hash),
+                           Path.of(mainDir, "assets", "objects", folderName, hash),
+                           hash, entry.getValue().size());
         }
-        
+
         waitUntilDownload();
+    }
+
+    private static String osToken() {
+        if (org.apache.commons.exec.OS.isFamilyWindows()) return "windows";
+        if (org.apache.commons.exec.OS.isFamilyMac()) return "osx";
+        if (org.apache.commons.exec.OS.isFamilyUnix()) return "linux";
+        return null;
+    }
+
+    private static String archBits() {
+        return System.getProperty("os.arch", "").contains("64") ? "64" : "32";
     }
 }

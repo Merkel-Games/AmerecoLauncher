@@ -4,12 +4,12 @@ public class MinecraftSession {
 
     private static MinecraftSession instance;
 
-    private Thread minecraftThread;
-    private Runnable onStopped;
+    private volatile Thread minecraftThread;
+    private volatile Runnable onStopped;
 
     private MinecraftSession() {}
 
-    public static MinecraftSession getInstance() {
+    public static synchronized MinecraftSession getInstance() {
         if (instance == null) {
             instance = new MinecraftSession();
         }
@@ -17,7 +17,8 @@ public class MinecraftSession {
     }
 
     public boolean isRunning() {
-        return minecraftThread != null && minecraftThread.isAlive();
+        Thread t = minecraftThread;
+        return t != null && t.isAlive();
     }
 
     public void setOnStopped(Runnable callback) {
@@ -31,8 +32,9 @@ public class MinecraftSession {
                 task.run();
             } finally {
                 minecraftThread = null;
-                if (onStopped != null) {
-                    onStopped.run();
+                Runnable cb = onStopped;
+                if (cb != null) {
+                    cb.run();
                 }
             }
         });
@@ -40,8 +42,9 @@ public class MinecraftSession {
     }
 
     public void stop() {
-        if (isRunning()) {
-            minecraftThread.interrupt();
+        Thread t = minecraftThread;
+        if (t != null && t.isAlive()) {
+            t.interrupt();
         }
     }
 }

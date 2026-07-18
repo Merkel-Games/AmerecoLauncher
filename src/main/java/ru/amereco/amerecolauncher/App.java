@@ -32,6 +32,15 @@ public class App extends Application {
         stage.show();
     }
 
+    @Override
+    public void stop() {
+        // Останавливаем сессию Minecraft при выходе, чтобы не оставить процесс-сироту.
+        try {
+            ru.amereco.amerecolauncher.minecraft.MinecraftSession.getInstance().stop();
+        } catch (Exception ignored) {
+        }
+    }
+
     static void setRoot(String fxml) throws IOException {
         scene.setRoot(loadFXML(fxml));
     }

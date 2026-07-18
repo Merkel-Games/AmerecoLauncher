@@ -154,35 +154,55 @@ public class LauncherUpdater extends Downloader {
      */
     @Override
     public void download() throws IOException, InterruptedException {
+        // ВНИМАНИЕ: механизм самообновления отключён (вызов LAUNCHER закомментирован
+        // в MainController). Перед включением ОБЯЗАТЕЛЬНО добавить проверку подписи/хэша
+        // скачанного установщика — иначе RCE с эскалацией через pkexec/sudo (см. отчёт B3).
         String url = String.format(DOWNLOAD_URL_TEMPLATE, installerType.ext);
         Path tmpDir = Files.createTempDirectory("amereco-update-");
         Path installer = tmpDir.resolve("AmerecoLauncher-update." + installerType.ext);
 
-        maxProgress = 1;
-        progress = 0;
-        updateStage("Скачивание обновления лаунчера...");
-        updateStep(installerType.ext);
+        boolean launched = false;
+        try {
+            resetProgress(1);
+            updateStage("Скачивание обновления лаунчера...");
+            updateStep(installerType.ext);
 
-        // Используем downloadToPath из Downloader — уже умеет followRedirects(ALWAYS)
-        downloadToPath(URI.create(url), installer);
+            downloadToPath(URI.create(url), installer);
 
-        updateStepAndIncProgress("Установщик скачан: " + installer.getFileName());
-        updateStage("Запуск установщика...");
+            updateStepAndIncProgress("Установщик скачан: " + installer.getFileName());
+            updateStage("Запуск установщика...");
 
-        // Права на выполнение для Unix-форматов
-        grantExecutePermission(installer);
+            // Права на выполнение для Unix-форматов
+            grantExecutePermission(installer);
 
-        Process process = launchInstaller(installer);
+            Process process = launchInstaller(installer);
 
-        // Ждём подтверждения, что процесс установщика запущен (до 5 секунд)
-        for (int i = 0; i < 50; i++) {
-            if (process.isAlive()) {
-                System.exit(0);
+            // Ждём подтверждения, что процесс установщика запущен (до 5 секунд)
+            for (int i = 0; i < 50; i++) {
+                if (process.isAlive()) {
+                    launched = true;
+                    System.exit(0);
+                }
+                Thread.sleep(100);
             }
-            Thread.sleep(100);
+        } finally {
+            // Установщик запущен → System.exit уже вызван (сюда не дойдём).
+            // Иначе (ошибка/установщик не стартовал) — чистим временную папку.
+            if (!launched) {
+                deleteQuietly(tmpDir);
+            }
         }
         // Процесс не стартовал за 5 секунд или сразу завершился — выходим с ошибкой
         System.exit(1);
+    }
+
+    private static void deleteQuietly(Path dir) {
+        try (java.util.stream.Stream<Path> s = Files.walk(dir)) {
+            s.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try { Files.deleteIfExists(p); } catch (IOException ignored) { }
+            });
+        } catch (IOException ignored) {
+        }
     }
 
     /**
@@ -390,7 +410,8 @@ public class LauncherUpdater extends Downloader {
      * Свойство: {@code launcher.version}.
      */
     private String currentVersion() {
-        return Config.properties.getProperty("launcher.version", "0.0.0");
+        // Ключ в application.properties называется "version" (launcher.version не существует).
+        return Config.properties.getProperty("version", "0.0.0");
     }
 
     /**
@@ -430,10 +451,14 @@ public class LauncherUpdater extends Downloader {
     private boolean commandExists(String cmd) {
         try {
             Process p = new ProcessBuilder("which", cmd)
-                    .redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
                     .start();
             p.waitFor();
             return p.exitValue() == 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         } catch (Exception e) {
             return false;
         }
@@ -527,14 +552,20 @@ public class LauncherUpdater extends Downloader {
     }
 
     private static int[] parseVersion(String v) {
-        // Убираем суффиксы типа "-beta", "+build" → заменяем на точку
-        String[] parts = v.replaceAll("[^0-9.]", ".").split("\\.");
-        int[] nums = new int[parts.length];
-        for (int i = 0; i < parts.length; i++) {
-            try { nums[i] = Integer.parseInt(parts[i]); }
-            catch (NumberFormatException ignored) { nums[i] = 0; }
+        // Отрезаем pre-release/build суффикс от первого '-' или '+',
+        // затем берём только числовые сегменты MAJOR.MINOR.PATCH.
+        // Иначе "2.0.0-rc1" → {2,0,0,1} ошибочно считался НОВЕЕ стабильного "2.0.0".
+        String core = v.trim().replaceFirst("[-+].*$", "");
+        String[] parts = core.split("\\.");
+        java.util.List<Integer> nums = new java.util.ArrayList<>();
+        for (String p : parts) {
+            if (p.isBlank()) continue;
+            try { nums.add(Integer.parseInt(p.trim())); }
+            catch (NumberFormatException ignored) { }
         }
-        return nums;
+        int[] out = new int[nums.size()];
+        for (int i = 0; i < out.length; i++) out[i] = nums.get(i);
+        return out;
     }
 
     /**

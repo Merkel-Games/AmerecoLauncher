@@ -10,6 +10,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import ru.amereco.amerecolauncher.httpsync.HTTPSync;
 import ru.amereco.amerecolauncher.minecraft.MinecraftLauncher;
@@ -17,7 +18,6 @@ import ru.amereco.amerecolauncher.minecraft.MinecraftSession;
 import javafx.scene.control.Button;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.Label;
-import javafx.scene.image.ImageView;
 import javafx.scene.layout.StackPane;
 import javafx.stage.WindowEvent;
 import ru.amereco.amerecolauncher.minecraft.Loader;
@@ -32,15 +32,18 @@ public class MainController {
         MINECRAFT, FABRIC, AUTHLIB_INJECTOR, HTTPSYNC, LAUNCHER;
         public static final EnumSet<UpdateNeeded> ALL_OPTS = EnumSet.allOf(UpdateNeeded.class);
     }
-    
+
     private final Config config = Config.get();
     private MinecraftDownloader minecraftDownloader;
     private FabricDownloader fabricDownloader;
     private AuthlibInjectorDownloader authlibInjectorDownloader;
     private LauncherUpdater launcherUpdater;
 
-    private EnumSet<UpdateNeeded> updateNeeded = EnumSet.noneOf(UpdateNeeded.class);
-    
+    // Пересоздаётся на каждой проверке; присваивается только на FX-потоке.
+    private volatile EnumSet<UpdateNeeded> updateNeeded = EnumSet.noneOf(UpdateNeeded.class);
+    // Не даём двум проверкам обновлений идти параллельно.
+    private final AtomicBoolean checking = new AtomicBoolean(false);
+
     @FXML private StackPane root;
     @FXML private Button mainButton;
     @FXML private Button settingsBtn;
@@ -50,7 +53,10 @@ public class MainController {
     @FXML private Label stageLabel;
     @FXML private Label stepLabel;
     @FXML private Label progressLabel;
-    @FXML private ImageView backgroundImage;
+
+    private static String prop(String key) {
+        return Config.properties.getProperty(key);
+    }
 
     /**
      * Returns the list of active profile names based on config features.
@@ -116,9 +122,9 @@ public class MainController {
 
         launcherUpdater = new LauncherUpdater();
         launcherUpdater.setOnProgress(this::handleProgressUpdate);
-        
+
         hideProgress();
-        
+
         root.sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
                 newScene.windowProperty().addListener((o2, oldWindow, newWindow) -> {
@@ -151,82 +157,98 @@ public class MainController {
     }
 
     private void checkUpdates() {
+        if (!checking.compareAndSet(false, true)) {
+            return; // проверка уже идёт
+        }
         showProgress();
-        new Thread(() -> {
+        mainButton.setDisable(true);
+        Thread t = new Thread(() -> {
             try {
-                if (minecraftDownloader.checkUpdates(Config.properties.getProperty("minecraftVersion")))
-                    updateNeeded.add(UpdateNeeded.MINECRAFT);
-                if (fabricDownloader.checkUpdates(Config.properties.getProperty("fabricVersion")))
-                    updateNeeded.add(UpdateNeeded.FABRIC);
-                if (authlibInjectorDownloader.checkUpdates(Config.properties.getProperty("authlibInjectorVersion")))
-                    updateNeeded.add(UpdateNeeded.AUTHLIB_INJECTOR);
-                
+                EnumSet<UpdateNeeded> needed = EnumSet.noneOf(UpdateNeeded.class);
+
+                if (minecraftDownloader.checkUpdates(prop("minecraftVersion")))
+                    needed.add(UpdateNeeded.MINECRAFT);
+                if (fabricDownloader.checkUpdates(prop("fabricVersion")))
+                    needed.add(UpdateNeeded.FABRIC);
+                if (authlibInjectorDownloader.checkUpdates(prop("authlibInjectorVersion")))
+                    needed.add(UpdateNeeded.AUTHLIB_INJECTOR);
+
                 // Purge disabled overlay profiles before checking updates
-                // This triggers cleanup immediately when user disables a profile in settings
                 purgeDisabledProfiles();
 
                 // Check all active profiles for updates
                 for (String profileName : getActiveProfiles()) {
                     HTTPSync sync = createSyncForProfile(profileName);
                     if (sync.checkUpdates("")) {
-                        updateNeeded.add(UpdateNeeded.HTTPSYNC);
+                        needed.add(UpdateNeeded.HTTPSYNC);
                         break; // one update is enough to trigger the update button
                     }
                 }
-                
+
                 // if (launcherUpdater.checkUpdates())
-                    // updateNeeded.add(UpdateNeeded.LAUNCHER);
-                                     
+                    // needed.add(UpdateNeeded.LAUNCHER);
+
                 javafx.application.Platform.runLater(() -> {
+                    updateNeeded = needed;
                     hideProgress();
                     if (MinecraftSession.getInstance().isRunning()) {
+                        mainButton.setDisable(false);
                         return;
                     }
-                    if (!updateNeeded.isEmpty()) {
+                    if (!needed.isEmpty()) {
                         mainButton.setText("Обновить");
                         mainButton.setOnAction(e -> startUpdate());
                     } else {
                         mainButton.setText("Играть");
                         mainButton.setOnAction(e -> launchMinecraft());
                     }
+                    mainButton.setDisable(false);
                 });
             } catch (Exception e) {
                 e.printStackTrace();
                 javafx.application.Platform.runLater(() -> {
                     stageLabel.setText("Ошибка проверки обновлений");
                     stepLabel.setText(e.getMessage());
+                    mainButton.setDisable(false);
                 });
+            } finally {
+                checking.set(false);
             }
-        }).start();
+        });
+        t.setDaemon(true);
+        t.start();
     }
 
     private void startUpdate() {
+        final EnumSet<UpdateNeeded> needed = updateNeeded.isEmpty()
+                ? EnumSet.noneOf(UpdateNeeded.class)
+                : EnumSet.copyOf(updateNeeded);
         mainButton.setDisable(true);
         showProgress();
-        new Thread(() -> {
+        Thread t = new Thread(() -> {
             try {
                 // Обновление лаунчера — первым, так как System.exit(0) убьёт процесс
-                if (updateNeeded.contains(UpdateNeeded.LAUNCHER)) {
+                if (needed.contains(UpdateNeeded.LAUNCHER)) {
                     launcherUpdater.askToUpdate();
                     return;
                 }
-                if (updateNeeded.contains(UpdateNeeded.MINECRAFT))
-                    minecraftDownloader.download(Config.properties.getProperty("minecraftVersion"));
-                if (updateNeeded.contains(UpdateNeeded.FABRIC))
-                    fabricDownloader.download(Config.properties.getProperty("fabricVersion"));
-                if (updateNeeded.contains(UpdateNeeded.AUTHLIB_INJECTOR))
-                    authlibInjectorDownloader.download(Config.properties.getProperty("authlibInjectorVersion"));
-                
+                if (needed.contains(UpdateNeeded.MINECRAFT))
+                    minecraftDownloader.download(prop("minecraftVersion"));
+                if (needed.contains(UpdateNeeded.FABRIC))
+                    fabricDownloader.download(prop("fabricVersion"));
+                if (needed.contains(UpdateNeeded.AUTHLIB_INJECTOR))
+                    authlibInjectorDownloader.download(prop("authlibInjectorVersion"));
+
                 // Sync profiles in order: base first, then overlays
-                // (purge of disabled profiles is done in checkUpdates)
-                if (updateNeeded.contains(UpdateNeeded.HTTPSYNC)) {
+                if (needed.contains(UpdateNeeded.HTTPSYNC)) {
                     for (String profileName : getActiveProfiles()) {
                         HTTPSync sync = createSyncForProfile(profileName);
                         sync.download("");
                     }
                 }
-                
+
                 javafx.application.Platform.runLater(() -> {
+                    updateNeeded = EnumSet.noneOf(UpdateNeeded.class); // сброс после успешного обновления
                     hideProgress();
                     mainButton.setText("Играть");
                     mainButton.setOnAction(e -> launchMinecraft());
@@ -240,7 +262,9 @@ public class MainController {
                     mainButton.setDisable(false);
                 });
             }
-        }).start();
+        });
+        t.setDaemon(true);
+        t.start();
     }
 
     private void handleProgressUpdate(ProgressData progress) {
@@ -253,14 +277,14 @@ public class MainController {
                 progress.progress(), progress.maxProgress()));
         });
     }
-    
+
     private void hideProgress() {
         stepLabel.setVisible(false);
         stageLabel.setVisible(false);
         progressBar.setVisible(false);
         progressLabel.setVisible(false);
     }
-    
+
     private void showProgress() {
         stepLabel.setVisible(true);
         stageLabel.setVisible(true);
@@ -292,25 +316,31 @@ public class MainController {
                         Path.of(gameDir)
                     );
 
+                    minecraftLauncher.uuid = config.uuid;
+                    minecraftLauncher.accessToken = config.accessToken;
+                    minecraftLauncher.clientId = config.clientId;
+                    if (config.userName != null && !config.userName.isBlank())
+                        minecraftLauncher.userName = config.userName;
+
                     try {
                         AuthServer auth = new AuthServer();
                         var resp = auth.refresh(config.accessToken, config.clientId, null);
                         config.accessToken = resp.accessToken();
-                        if (resp.selectedProfile() != null)
+                        minecraftLauncher.accessToken = resp.accessToken();
+                        if (resp.selectedProfile() != null) {
                             minecraftLauncher.userName = resp.selectedProfile().name();
+                            config.userName = resp.selectedProfile().name();
+                        }
                         config.save();
                     } catch (Exception e) {
                         // proceed — authlib-injector can resolve profile from token
+                        e.printStackTrace();
                     }
 
-                    minecraftLauncher.uuid = config.uuid;
-                    minecraftLauncher.accessToken = config.accessToken;
-                    minecraftLauncher.clientId = config.clientId;
-
                     Loader loader = new Loader(minecraftLauncher);
-                    loader.loadPatch(Config.properties.getProperty("authlibInjectorVersion"));
-                    loader.loadFull(Config.properties.getProperty("minecraftVersion"));
-                    loader.loadPatch(Config.properties.getProperty("fabricVersion"));
+                    loader.loadPatch(prop("authlibInjectorVersion"));
+                    loader.loadFull(prop("minecraftVersion"));
+                    loader.loadPatch(prop("fabricVersion"));
                     minecraftLauncher.launch();
                 } catch (Exception exc) {
                     exc.printStackTrace();
@@ -325,7 +355,7 @@ public class MainController {
             stepLabel.setText(exc.getMessage());
         }
     }
-    
+
     @FXML
     private void onLogoutPressed() throws IOException{
         stopMinecraft();
@@ -333,10 +363,11 @@ public class MainController {
             AuthServer auth = new AuthServer();
             auth.invalidate(config.accessToken, config.clientId);
         } catch (Exception e) {
-            // proceed — authlib-injector can resolve profile from token
+            e.printStackTrace();
         }
         config.accessToken = "";
         config.uuid = "";
+        config.userName = null;
         config.save();
         switchToAuth();
     }
@@ -344,12 +375,13 @@ public class MainController {
     public void stopMinecraft() {
         MinecraftSession.getInstance().stop();
     }
-    
+
     @FXML
     private void playOrUpdate() {
-        // Will be implemented based on current state
+        // Реальный обработчик назначается через mainButton.setOnAction(...)
+        // после завершения checkUpdates(); до этого кнопка disabled.
     }
-    
+
     @FXML
     private void switchToAuth() throws IOException {
         App.setRoot("auth");
@@ -359,7 +391,7 @@ public class MainController {
     private void switchToSettings() throws IOException {
         App.setRoot("settings");
     }
-    
+
     @FXML
     private void exitProgram() {
         Platform.exit();

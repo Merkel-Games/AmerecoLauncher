@@ -4,6 +4,7 @@
  */
 package ru.amereco.amerecolauncher.utils;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -11,32 +12,42 @@ import java.util.function.Consumer;
  * @author lanode
  */
 public class ProgressSupplier {
-    protected int maxProgress;
-    protected int progress;
-    protected String stage;
-    protected String step;
-    protected Consumer<ProgressData> onProgress;
-    
+    // progress увеличивается из нескольких потоков загрузки — atomic, чтобы избежать
+    // потерянных инкрементов (race на неатомарном progress++).
+    protected final AtomicInteger progress = new AtomicInteger();
+    protected volatile int maxProgress;
+    protected volatile String stage;
+    protected volatile String step;
+    protected volatile Consumer<ProgressData> onProgress;
+
     public void setOnProgress(Consumer<ProgressData> callback) {
         this.onProgress = callback;
     }
-    
+
+    /** Атомарно задаёт границу прогресса и обнуляет счётчик для новой фазы. */
+    protected void resetProgress(int max) {
+        maxProgress = max;
+        progress.set(0);
+    }
+
     protected void updateStage(String stage) {
         this.stage = stage;
-        if (onProgress != null) {
-            onProgress.accept(new ProgressData(maxProgress, progress, stage, step));
+        Consumer<ProgressData> cb = onProgress;
+        if (cb != null) {
+            cb.accept(new ProgressData(maxProgress, progress.get(), stage, step));
         }
     }
-    
+
     protected void updateStep(String step) {
         this.step = step;
-        if (onProgress != null) {
-            onProgress.accept(new ProgressData(maxProgress, progress, stage, step));
+        Consumer<ProgressData> cb = onProgress;
+        if (cb != null) {
+            cb.accept(new ProgressData(maxProgress, progress.get(), stage, step));
         }
     }
-    
+
     protected void updateStepAndIncProgress(String step) {
-        progress++;
+        progress.incrementAndGet();
         updateStep(step);
     }
 }

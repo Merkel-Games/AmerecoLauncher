@@ -5,9 +5,9 @@
 package ru.amereco.amerecolauncher.minecraft.authlibinjector;
 
 import com.google.gson.JsonPrimitive;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -43,8 +43,7 @@ public class AuthlibInjectorDownloader extends Downloader {
     @Override
     public void download(String versionId) throws IOException, InterruptedException {
         updateStage("Загрузка Authlib-Injector");
-        maxProgress = 1;
-        progress = 0;
+        resetProgress(1);
         updateStepAndIncProgress(versionId + ".json");
 
         String mainDir = Config.get().mainDir;
@@ -52,32 +51,20 @@ public class AuthlibInjectorDownloader extends Downloader {
 
         String downloadUrl = String.format(AUTHLIB_INJECTOR_URL, version, version);
         String libraryPath = String.format(LIBRARY_PATH, version, version);
-        String jarAbsolutePath = Path.of(mainDir, "libraries", libraryPath).toString();
         String apiUrl = Config.properties.getProperty("authlibApiUrl");
         Version versionObj = new Version(
             new Version.Arguments(
                 null,
                 List.of(
-                    new JsonPrimitive("-javaagent:" + jarAbsolutePath + "=" + apiUrl),
-                    new JsonPrimitive("-Dauthlibinjector.debug=verbose,authlib")
+                    // Относительный путь через плейсхолдер ${library_directory} —
+                    // не ломается при смене mainDir/переносе (см. MinecraftLauncher).
+                    // Debug-логирование authlib-injector отключено: оно писало токен в логи.
+                    new JsonPrimitive("-javaagent:${library_directory}/" + libraryPath + "=" + apiUrl)
                 )
             ),
             null,
             null,
             null,
-            // List.of(new Library(
-            //     String.format(LIBRARY_NAME, version),
-            //     new Library.Downloads(
-            //         new Library.Downloads.LibraryDownload(
-            //             libraryPath,
-            //             null,
-            //             null,
-            //             URI.create(downloadUrl)
-            //         ),
-            //         null
-            //     ),
-            //     null
-            // )),
             null,
             null,
             null
@@ -85,10 +72,7 @@ public class AuthlibInjectorDownloader extends Downloader {
 
         Path versionJsonPath = Path.of(mainDir, "versions", versionId, versionId + ".json");
         Files.createDirectories(versionJsonPath.getParent());
-        Files.createFile(versionJsonPath);
-        try (FileWriter out = new FileWriter(versionJsonPath.toString(), false)) {
-            out.write(gson.toJson(versionObj));
-        }
+        Files.writeString(versionJsonPath, gson.toJson(versionObj), StandardCharsets.UTF_8);
 
         setFailDownloadHandler(((t) -> {
             try {

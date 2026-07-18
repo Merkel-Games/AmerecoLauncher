@@ -15,6 +15,8 @@ import java.util.Map;
 public record Library(
     String name,
     Downloads downloads,
+    Map<String, String> natives,
+    Extract extract,
     List<Rule> rules
 ) {
     public record Downloads(
@@ -29,18 +31,11 @@ public record Library(
         ) {}
     }
 
+    public record Extract(
+        List<String> exclude
+    ) {}
+
     public boolean shouldUse() {
-        if (rules == null || rules.isEmpty()) {
-            return true;
-        }
-
-        for (Rule rule : rules) {
-            if (!rule.allows()) {
-                return false;
-            }
-        }
-
-        return true;
+        return Rule.isAllowed(rules);
     }
 }
-

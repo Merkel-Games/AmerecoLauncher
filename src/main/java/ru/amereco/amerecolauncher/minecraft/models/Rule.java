@@ -8,7 +8,9 @@ import com.google.gson.annotations.SerializedName;
 
 import ru.amereco.amerecolauncher.Config;
 
+import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  *
@@ -35,38 +37,57 @@ public record Rule(
             @SerializedName("linux") LINUX
         }
     }
-    
-    public boolean allows() {
-        boolean shouldDisallow = action == Action.DISALLOW;
 
-        // Проверяем семейство ОС
+    /**
+     * Вычисляет итоговое разрешение по списку правил по семантике Mojang
+     * («последнее совпавшее правило решает», старт — запрещено).
+     * Пустой/null список — разрешено.
+     */
+    public static boolean isAllowed(List<Rule> rules) {
+        if (rules == null || rules.isEmpty()) {
+            return true;
+        }
+        boolean allowed = false;
+        for (Rule rule : rules) {
+            if (rule.matches()) {
+                allowed = rule.action() == Action.ALLOW;
+            }
+        }
+        return allowed;
+    }
+
+    /**
+     * Проверяет, применимо ли правило к текущему окружению (ОС/архитектура/версия/features),
+     * НЕ учитывая action. Правило без ограничений применимо всегда.
+     */
+    public boolean matches() {
         if (os != null) {
             if (os.name() != null) {
-                switch (os.name()) {
-                    case WINDOWS -> {
-                        if (!org.apache.commons.exec.OS.isFamilyWindows())
-                            return shouldDisallow;
-                    }
-                    case OSX -> {
-                        if (!org.apache.commons.exec.OS.isFamilyMac())
-                            return shouldDisallow;
-                    }
-                    case LINUX -> {
-                        if (!org.apache.commons.exec.OS.isFamilyUnix())
-                            return shouldDisallow;
-                    }
+                boolean ok = switch (os.name()) {
+                    case WINDOWS -> org.apache.commons.exec.OS.isFamilyWindows();
+                    case OSX -> org.apache.commons.exec.OS.isFamilyMac();
+                    // isFamilyUnix() истинна и на macOS — исключаем Mac явно.
+                    case LINUX -> org.apache.commons.exec.OS.isFamilyUnix()
+                            && !org.apache.commons.exec.OS.isFamilyMac();
+                };
+                if (!ok) {
+                    return false;
                 }
             }
-            // Проверяем архитектуру, если указана
             if (os.arch() != null && !os.arch().isEmpty()) {
-                if (!org.apache.commons.exec.OS.isArch(os.arch())) {
-                    return shouldDisallow;
+                if (!normArch(System.getProperty("os.arch", "")).equals(normArch(os.arch()))) {
+                    return false;
                 }
             }
-            // Проверяем версию, если указана
             if (os.version() != null && !os.version().isEmpty()) {
-                if (!org.apache.commons.exec.OS.isVersion(os.version())) {
-                    return shouldDisallow;
+                // В манифесте os.version — регулярное выражение, а не точная строка.
+                try {
+                    if (!Pattern.compile(os.version())
+                            .matcher(System.getProperty("os.version", "")).find()) {
+                        return false;
+                    }
+                } catch (RuntimeException ignored) {
+                    // некорректный regex — не накладываем ограничение по версии
                 }
             }
         }
@@ -74,12 +95,23 @@ public record Rule(
         if (features != null) {
             Config config = Config.get();
             for (var entry : features.entrySet()) {
-                if (!(entry.getValue() && config.features.getOrDefault(entry.getKey(), false))) {
-                    return shouldDisallow;
+                boolean want = entry.getValue() != null && entry.getValue();
+                boolean have = config.features.getOrDefault(entry.getKey(), false);
+                if (want != have) {
+                    return false;
                 }
             }
         }
 
-        return !shouldDisallow;
+        return true;
+    }
+
+    private static String normArch(String arch) {
+        String a = arch.toLowerCase();
+        if (a.contains("aarch64") || a.contains("arm64")) return "arm64";
+        if (a.contains("arm")) return "arm";
+        if (a.contains("64") || a.equals("x64")) return "x64";
+        if (a.contains("86") || a.equals("x32")) return "x86";
+        return a;
     }
 }

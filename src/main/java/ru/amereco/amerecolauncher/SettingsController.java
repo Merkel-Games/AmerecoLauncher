@@ -2,10 +2,13 @@ package ru.amereco.amerecolauncher;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.ResourceBundle;
+import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
 import javafx.scene.control.Alert;
@@ -21,7 +24,7 @@ import javafx.stage.Stage;
  * @author lanode
  */
 public class SettingsController implements Initializable {
-    
+
     private Config config;
 
     @FXML private TextField mainDirInput;
@@ -57,11 +60,22 @@ public class SettingsController implements Initializable {
 
     @FXML
     private void switchToMain() throws IOException {
+        String dir = mainDirInput.getText();
+        if (dir == null || dir.isBlank()) {
+            new Alert(Alert.AlertType.ERROR, "Укажите папку установки", ButtonType.OK).showAndWait();
+            return;
+        }
+        try {
+            Files.createDirectories(Path.of(dir));
+        } catch (Exception e) {
+            new Alert(Alert.AlertType.ERROR, "Недоступный путь: " + e.getMessage(), ButtonType.OK).showAndWait();
+            return;
+        }
         save();
         config.save();
         App.setRoot("main");
     }
-    
+
     @FXML
     private void selectMainDir() {
         DirectoryChooser directoryChooser = new DirectoryChooser();
@@ -76,10 +90,42 @@ public class SettingsController implements Initializable {
     }
 
     @FXML
-    private void resetResources() throws IOException {
-        Alert alert = new Alert(Alert.AlertType.WARNING, "Перезагрузить все данные заного?\nВсе файлы будут удалены.", ButtonType.YES, ButtonType.NO);
-        if (alert.showAndWait().get() == ButtonType.YES) {
-            Files.deleteIfExists(Path.of(Config.get().mainDir));    
+    private void resetResources() {
+        Alert alert = new Alert(Alert.AlertType.WARNING,
+                "Перезагрузить все данные заного?\nВсе файлы будут удалены.",
+                ButtonType.YES, ButtonType.NO);
+        if (alert.showAndWait().orElse(ButtonType.NO) != ButtonType.YES) {
+            return;
+        }
+
+        Path dir = Path.of(Config.get().mainDir);
+        Thread t = new Thread(() -> {
+            try {
+                deleteRecursively(dir);
+                Platform.runLater(() -> new Alert(Alert.AlertType.INFORMATION,
+                        "Все ресурсы удалены.", ButtonType.OK).showAndWait());
+            } catch (IOException e) {
+                e.printStackTrace();
+                Platform.runLater(() -> new Alert(Alert.AlertType.ERROR,
+                        "Не удалось удалить ресурсы: " + e.getMessage(), ButtonType.OK).showAndWait());
+            }
+        }, "reset-resources");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private static void deleteRecursively(Path dir) throws IOException {
+        if (!Files.exists(dir)) return;
+        try (var stream = Files.walk(dir)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
         }
     }
 }

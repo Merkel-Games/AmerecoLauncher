@@ -7,8 +7,11 @@ import dev.dirs.ProjectDirectories;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -35,7 +38,7 @@ public class Config {
             throw new ExceptionInInitializerError(e);
         }
     }
-    
+
 
     private static Config instance;
 
@@ -52,6 +55,8 @@ public class Config {
     @Expose
     public String uuid;
     @Expose
+    public String userName;
+    @Expose
     public Map<String, Boolean> features;
 
     private Config() {
@@ -59,39 +64,74 @@ public class Config {
         this.mainDir = Path.of(projectDir.dataLocalDir, ".minceraft").toString();
         this.uuid = null;
         this.accessToken = null;
+        this.userName = null;
         this.clientId = UUID.randomUUID().toString().replace("-", "");
         this.javaDir = System.getProperty("java.home");
         this.downloadThreadsCount = Runtime.getRuntime().availableProcessors();
         this.features = new HashMap<>();
-        this.features.put("is_quick_play_multiplayer", true);
-        this.features.put("profile_rpcraft", true);
-        this.features.put("profile_rpcraft_admin", false);
-        this.features.put("profile_rpcraft_ultra", false);
+        normalize();
     }
 
-    public static Config get() {
+    /**
+     * Заполняет отсутствующие/некорректные поля значениями по умолчанию.
+     *
+     * <p>Gson инстанцирует объект в обход конструктора (через Unsafe), поэтому дефолты
+     * из конструктора при загрузке НЕ применяются. Этот метод восстанавливает инварианты
+     * после {@code fromJson}: без него старый/частичный/правленый {@code config.json}
+     * приводит к null-полям и {@code downloadThreadsCount == 0}
+     * (→ {@code newFixedThreadPool(0)} бросает исключение).
+     */
+    private void normalize() {
+        if (mainDir == null || mainDir.isBlank()) {
+            mainDir = Path.of(projectDir.dataLocalDir, ".minceraft").toString();
+        }
+        if (clientId == null || clientId.isBlank()) {
+            clientId = UUID.randomUUID().toString().replace("-", "");
+        }
+        if (javaDir == null || javaDir.isBlank()) {
+            javaDir = System.getProperty("java.home");
+        }
+        if (downloadThreadsCount <= 0) {
+            downloadThreadsCount = Runtime.getRuntime().availableProcessors();
+        }
+        if (features == null) {
+            features = new HashMap<>();
+        }
+        features.putIfAbsent("is_quick_play_multiplayer", true);
+        features.putIfAbsent("profile_rpcraft", true);
+        features.putIfAbsent("profile_rpcraft_admin", false);
+        features.putIfAbsent("profile_rpcraft_ultra", false);
+    }
+
+    public static synchronized Config get() {
         if (instance == null) {
             load(); // lazy-load
         }
         return instance;
     }
 
-    public static void load() {
+    public static synchronized void load() {
         Path configPath = Path.of(projectDir.configDir, CONFIG_FILE);
+        Config loaded = null;
         if (Files.exists(configPath)) {
             try {
                 String json = Files.readString(configPath);
-                instance = gson.fromJson(json, Config.class);
-            } catch (IOException e) {
+                loaded = gson.fromJson(json, Config.class);
+            } catch (Exception e) {
+                // Ловим не только IOException, но и JsonSyntaxException (битый JSON) —
+                // иначе повреждённый config.json роняет запуск лаунчера.
                 System.err.println("Failed to load config: " + e.getMessage());
-                instance = new Config(); // fallback
             }
-        } else {
-            instance = new Config(); // default config
         }
+        if (loaded == null) {
+            loaded = new Config(); // fallback (конструктор уже нормализует)
+        } else {
+            loaded.normalize(); // backfill отсутствующих полей после Gson
+        }
+        instance = loaded;
     }
 
-    public void save() {
+    public synchronized void save() {
         if (instance == null) {
             instance = new Config();
         }
@@ -99,10 +139,32 @@ public class Config {
         Path configPath = Path.of(projectDir.configDir, CONFIG_FILE);
         try {
             Files.createDirectories(configPath.getParent());
+            Path tmp = configPath.resolveSibling(CONFIG_FILE + ".tmp");
             String json = gson.toJson(instance);
-            Files.writeString(configPath, json);
+            Files.writeString(tmp, json);
+            restrictPermissions(tmp);
+            try {
+                Files.move(tmp, configPath,
+                        StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, configPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+            restrictPermissions(configPath);
         } catch (IOException e) {
             System.err.println("Failed to save config: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Ограничивает доступ к файлу конфига до владельца (rw-------) на POSIX-системах.
+     * Файл содержит живой access-токен, поэтому не должен быть world-readable (0644).
+     * На не-POSIX ФС (например Windows) — тихо игнорируется.
+     */
+    private static void restrictPermissions(Path path) {
+        try {
+            Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rw-------"));
+        } catch (UnsupportedOperationException | IOException ignored) {
+            // не-POSIX ФС — пропускаем
         }
     }
 }
