@@ -5,6 +5,7 @@
 <?import javafx.scene.control.CheckBox?>
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Slider?>
 <?import javafx.scene.control.TextField?>
 <?import javafx.scene.image.Image?>
 <?import javafx.scene.image.ImageView?>
@@ -81,6 +82,19 @@
                    <CheckBox fx:id="rpcraftCheckbox" mnemonicParsing="false" prefWidth="500.0" text="rpcraft (базовый)" textFill="WHITE" />
                    <CheckBox fx:id="rpcraftAdminCheckbox" mnemonicParsing="false" prefWidth="500.0" text="rpcraft-admin (админский)" textFill="WHITE" />
                    <CheckBox fx:id="rpcraftUltraCheckbox" mnemonicParsing="false" prefWidth="500.0" text="rpcraft-ultra (ультра)" textFill="WHITE" />
+                  <Label text="Память игры" textFill="WHITE">
+                     <VBox.margin>
+                        <Insets top="10.0" />
+                     </VBox.margin>
+                  </Label>
+                   <CheckBox fx:id="memoryAutoCheckbox" mnemonicParsing="false" prefWidth="500.0" text="Определять автоматически" textFill="WHITE" />
+                   <Slider fx:id="memorySlider" blockIncrement="512.0" majorTickUnit="1024.0" max="8192.0" min="1024.0" minorTickCount="1" prefWidth="500.0" snapToTicks="true" value="4096.0" />
+                   <Label fx:id="memoryLabel" prefWidth="500.0" text="" textFill="WHITE" wrapText="true" />
+                   <Label prefWidth="500.0" text="В системном мониторе процесс займёт на 1–2 ГБ больше: сверх кучи игре нужны текстуры, буферы видеокарты и нативные библиотеки." textFill="#9e9e9e" wrapText="true">
+                      <font>
+                         <Font size="10.0" />
+                      </font>
+                   </Label>
                </children>
             </VBox>
          </content>

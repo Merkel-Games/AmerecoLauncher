@@ -14,9 +14,12 @@ import javafx.fxml.Initializable;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.Slider;
 import javafx.scene.control.TextField;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
+import ru.amereco.amerecolauncher.minecraft.JvmTuning;
 
 /**
  * FXML Controller class
@@ -32,6 +35,9 @@ public class SettingsController implements Initializable {
     @FXML private CheckBox rpcraftCheckbox;
     @FXML private CheckBox rpcraftAdminCheckbox;
     @FXML private CheckBox rpcraftUltraCheckbox;
+    @FXML private CheckBox memoryAutoCheckbox;
+    @FXML private Slider memorySlider;
+    @FXML private Label memoryLabel;
 
     private void load() {
         mainDirInput.setText(config.mainDir);
@@ -39,6 +45,15 @@ public class SettingsController implements Initializable {
         rpcraftCheckbox.setSelected(config.features.getOrDefault("profile_rpcraft", true));
         rpcraftAdminCheckbox.setSelected(config.features.getOrDefault("profile_rpcraft_admin", false));
         rpcraftUltraCheckbox.setSelected(config.features.getOrDefault("profile_rpcraft_ultra", false));
+
+        // Потолок — половина физической ОЗУ, но не больше 8 ГБ.
+        memorySlider.setMax(Math.max(memorySlider.getMin(), JvmTuning.maxAllowedHeapMb()));
+
+        boolean auto = config.maxMemoryMb <= 0;
+        memoryAutoCheckbox.setSelected(auto);
+        memorySlider.setValue(auto ? JvmTuning.recommendedHeapMb() : config.maxMemoryMb);
+        memorySlider.setDisable(auto);
+        updateMemoryLabel();
     }
 
     private void save() {
@@ -47,6 +62,15 @@ public class SettingsController implements Initializable {
         config.features.put("profile_rpcraft", rpcraftCheckbox.isSelected());
         config.features.put("profile_rpcraft_admin", rpcraftAdminCheckbox.isSelected());
         config.features.put("profile_rpcraft_ultra", rpcraftUltraCheckbox.isSelected());
+        // 0 — признак «считать автоматически», см. JvmTuning.heapMb
+        config.maxMemoryMb = memoryAutoCheckbox.isSelected() ? 0 : (int) memorySlider.getValue();
+    }
+
+    private void updateMemoryLabel() {
+        int mb = (int) memorySlider.getValue();
+        memoryLabel.setText(memoryAutoCheckbox.isSelected()
+                ? "Автоматически: " + mb + " МБ"
+                : mb + " МБ");
     }
 
     /**
@@ -55,6 +79,16 @@ public class SettingsController implements Initializable {
     @Override
     public void initialize(URL url, ResourceBundle rb) {
         config = Config.get();
+
+        memoryAutoCheckbox.selectedProperty().addListener((obs, was, isAuto) -> {
+            memorySlider.setDisable(isAuto);
+            if (isAuto) {
+                memorySlider.setValue(JvmTuning.recommendedHeapMb());
+            }
+            updateMemoryLabel();
+        });
+        memorySlider.valueProperty().addListener((obs, was, now) -> updateMemoryLabel());
+
         load();
     }
 

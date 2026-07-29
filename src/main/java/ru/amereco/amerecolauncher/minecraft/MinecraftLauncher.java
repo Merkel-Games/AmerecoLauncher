@@ -132,6 +132,10 @@ public class MinecraftLauncher {
         List<String> command = new ArrayList<>();
         command.add(executable);
         command.addAll(getArgumentsString(jvmArguments, substitutes));
+        // Наши флаги идут ПОСЛЕ аргументов из version.json: при дублирующихся
+        // -Xmx/-XX: побеждает последнее вхождение, значит настройки лаунчера
+        // перекроют то, что могло прийти от Mojang или от патча authlib-injector.
+        command.addAll(JvmTuning.build(config, executable));
         command.add(mainClass);
         command.addAll(getArgumentsString(gameArguments, substitutes));
 

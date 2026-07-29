@@ -2,6 +2,9 @@ open module ru.amereco.amerecolauncher {
     requires javafx.controls;
     requires javafx.fxml;
     requires java.net.http;
+    // com.sun.management.OperatingSystemMXBean — определение физической ОЗУ
+    // для авторасчёта -Xmx в JvmTuning.
+    requires jdk.management;
     requires org.json;
     requires transitive dev.dirs;
     requires com.google.gson;

@@ -10,6 +10,9 @@ package ru.amereco.amerecolauncher;
  */
 public class Main {
     public static void main(String[] args) {
+        // Первым делом — лог, чтобы в него попало всё, включая ошибки старта.
+        Log.init();
+
         System.setProperty("prism.texture.filter", "nearest");
 
         App.main(args);

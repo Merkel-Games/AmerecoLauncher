@@ -58,6 +58,15 @@ public class Config {
     public String userName;
     @Expose
     public Map<String, Boolean> features;
+    /** Размер кучи игры в мегабайтах. {@code 0} — считать автоматически. */
+    @Expose
+    public int maxMemoryMb;
+    /** Профиль сборщика мусора для игры: {@code auto}, {@code shenandoah}, {@code g1}, {@code off}. */
+    @Expose
+    public String gcProfile;
+    /** Дополнительные аргументы JVM, через пробел. */
+    @Expose
+    public String extraJvmArgs;
 
     private Config() {
         // Значения по умолчанию
@@ -69,6 +78,9 @@ public class Config {
         this.javaDir = System.getProperty("java.home");
         this.downloadThreadsCount = Runtime.getRuntime().availableProcessors();
         this.features = new HashMap<>();
+        this.maxMemoryMb = 0;   // 0 => авто, normalize() оставит как есть
+        this.gcProfile = "auto";
+        this.extraJvmArgs = "";
         normalize();
     }
 
@@ -96,6 +108,15 @@ public class Config {
         }
         if (features == null) {
             features = new HashMap<>();
+        }
+        if (maxMemoryMb < 0) {
+            maxMemoryMb = 0;   // отрицательное значение из правленого конфига => авто
+        }
+        if (gcProfile == null || gcProfile.isBlank()) {
+            gcProfile = "auto";
+        }
+        if (extraJvmArgs == null) {
+            extraJvmArgs = "";
         }
         features.putIfAbsent("is_quick_play_multiplayer", true);
         features.putIfAbsent("profile_rpcraft", true);

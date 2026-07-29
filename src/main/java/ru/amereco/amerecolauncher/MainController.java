@@ -1,8 +1,12 @@
 package ru.amereco.amerecolauncher;
 
 import java.io.IOException;
+import javafx.animation.Animation;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.fxml.FXML;
 import javafx.application.Platform;
+import javafx.util.Duration;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,12 +28,12 @@ import ru.amereco.amerecolauncher.minecraft.Loader;
 import ru.amereco.amerecolauncher.minecraft.MinecraftDownloader;
 import ru.amereco.amerecolauncher.minecraft.fabric.FabricDownloader;
 import ru.amereco.amerecolauncher.utils.ProgressData;
-import ru.amereco.amerecolauncher.LauncherUpdater;
 import ru.amereco.amerecolauncher.minecraft.authlibinjector.AuthlibInjectorDownloader;
 
 public class MainController {
+    /** Обновление лаунчера здесь не участвует — им занимается {@link App}. */
     public enum UpdateNeeded {
-        MINECRAFT, FABRIC, AUTHLIB_INJECTOR, HTTPSYNC, LAUNCHER;
+        MINECRAFT, FABRIC, AUTHLIB_INJECTOR, HTTPSYNC;
         public static final EnumSet<UpdateNeeded> ALL_OPTS = EnumSet.allOf(UpdateNeeded.class);
     }
 
@@ -37,12 +41,24 @@ public class MainController {
     private MinecraftDownloader minecraftDownloader;
     private FabricDownloader fabricDownloader;
     private AuthlibInjectorDownloader authlibInjectorDownloader;
-    private LauncherUpdater launcherUpdater;
+
+    /** Как часто перепроверять игровые обновления, пока открыт этот экран. */
+    private static final Duration ASSETS_CHECK_INTERVAL = Duration.minutes(5);
 
     // Пересоздаётся на каждой проверке; присваивается только на FX-потоке.
     private volatile EnumSet<UpdateNeeded> updateNeeded = EnumSet.noneOf(UpdateNeeded.class);
     // Не даём двум проверкам обновлений идти параллельно.
     private final AtomicBoolean checking = new AtomicBoolean(false);
+    // Идёт скачивание игровых обновлений. Статический, потому что флаг должен
+    // пережить смену экрана и быть виден таймеру обновления лаунчера в App.
+    private static final AtomicBoolean updating = new AtomicBoolean(false);
+
+    /** Идёт ли сейчас скачивание игровых файлов. */
+    static boolean isUpdatingAssets() {
+        return updating.get();
+    }
+
+    private Timeline assetsCheckTimer;
 
     @FXML private StackPane root;
     @FXML private Button mainButton;
@@ -120,8 +136,9 @@ public class MainController {
         authlibInjectorDownloader = new AuthlibInjectorDownloader();
         authlibInjectorDownloader.setOnProgress(this::handleProgressUpdate);
 
-        launcherUpdater = new LauncherUpdater();
-        launcherUpdater.setOnProgress(this::handleProgressUpdate);
+        // Обновлятором лаунчера владеет App (проверка идёт по таймеру на любом экране);
+        // пока открыт этот экран — показываем его прогресс здесь.
+        App.launcherUpdater().setOnProgress(this::handleProgressUpdate);
 
         hideProgress();
 
@@ -135,8 +152,19 @@ public class MainController {
                         });
                     }
                 });
+            } else if (assetsCheckTimer != null) {
+                // Экран сменили (настройки, выход из аккаунта) — таймер здесь больше не нужен.
+                assetsCheckTimer.stop();
             }
         });
+
+        // Игровые обновления перепроверяем только пока открыт этот экран: именно
+        // здесь есть кнопка и прогресс, и именно здесь лаунчер стоит часами.
+        assetsCheckTimer = new Timeline(new KeyFrame(
+                ASSETS_CHECK_INTERVAL, e -> checkUpdatesPeriodic()));
+        assetsCheckTimer.setCycleCount(Animation.INDEFINITE);
+        assetsCheckTimer.play();
+
         checkUpdates();
 
         var session = MinecraftSession.getInstance();
@@ -157,11 +185,32 @@ public class MainController {
     }
 
     private void checkUpdates() {
+        checkUpdates(false);
+    }
+
+    /**
+     * Перепроверка по таймеру: пропускаем, если сейчас идёт обновление или
+     * запущена игра — иначе собьём состояние кнопки.
+     */
+    private void checkUpdatesPeriodic() {
+        if (updating.get() || MinecraftSession.getInstance().isRunning()) {
+            return;
+        }
+        checkUpdates(true);
+    }
+
+    /**
+     * @param quiet тихий режим для проверок по таймеру: не показываем прогресс-панель
+     *              и не блокируем кнопку, только обновляем её состояние по результату
+     */
+    private void checkUpdates(boolean quiet) {
         if (!checking.compareAndSet(false, true)) {
             return; // проверка уже идёт
         }
-        showProgress();
-        mainButton.setDisable(true);
+        if (!quiet) {
+            showProgress();
+            mainButton.setDisable(true);
+        }
         Thread t = new Thread(() -> {
             try {
                 EnumSet<UpdateNeeded> needed = EnumSet.noneOf(UpdateNeeded.class);
@@ -185,14 +234,16 @@ public class MainController {
                     }
                 }
 
-                // if (launcherUpdater.checkUpdates())
-                    // needed.add(UpdateNeeded.LAUNCHER);
-
                 javafx.application.Platform.runLater(() -> {
                     updateNeeded = needed;
-                    hideProgress();
-                    if (MinecraftSession.getInstance().isRunning()) {
-                        mainButton.setDisable(false);
+                    if (!quiet) {
+                        hideProgress();
+                    }
+                    // Идёт игра или обновление — состояние кнопки трогать нельзя.
+                    if (MinecraftSession.getInstance().isRunning() || updating.get()) {
+                        if (!quiet) {
+                            mainButton.setDisable(false);
+                        }
                         return;
                     }
                     if (!needed.isEmpty()) {
@@ -202,15 +253,20 @@ public class MainController {
                         mainButton.setText("Играть");
                         mainButton.setOnAction(e -> launchMinecraft());
                     }
-                    mainButton.setDisable(false);
+                    if (!quiet) {
+                        mainButton.setDisable(false);
+                    }
                 });
             } catch (Exception e) {
                 e.printStackTrace();
-                javafx.application.Platform.runLater(() -> {
-                    stageLabel.setText("Ошибка проверки обновлений");
-                    stepLabel.setText(e.getMessage());
-                    mainButton.setDisable(false);
-                });
+                // В тихом режиме молчим: сеть могла моргнуть, следующая попытка через 5 минут.
+                if (!quiet) {
+                    javafx.application.Platform.runLater(() -> {
+                        stageLabel.setText("Ошибка проверки обновлений");
+                        stepLabel.setText(e.getMessage());
+                        mainButton.setDisable(false);
+                    });
+                }
             } finally {
                 checking.set(false);
             }
@@ -220,6 +276,9 @@ public class MainController {
     }
 
     private void startUpdate() {
+        if (!updating.compareAndSet(false, true)) {
+            return; // обновление уже идёт
+        }
         final EnumSet<UpdateNeeded> needed = updateNeeded.isEmpty()
                 ? EnumSet.noneOf(UpdateNeeded.class)
                 : EnumSet.copyOf(updateNeeded);
@@ -227,11 +286,6 @@ public class MainController {
         showProgress();
         Thread t = new Thread(() -> {
             try {
-                // Обновление лаунчера — первым, так как System.exit(0) убьёт процесс
-                if (needed.contains(UpdateNeeded.LAUNCHER)) {
-                    launcherUpdater.askToUpdate();
-                    return;
-                }
                 if (needed.contains(UpdateNeeded.MINECRAFT))
                     minecraftDownloader.download(prop("minecraftVersion"));
                 if (needed.contains(UpdateNeeded.FABRIC))
@@ -261,6 +315,8 @@ public class MainController {
                     stepLabel.setText(e.getMessage());
                     mainButton.setDisable(false);
                 });
+            } finally {
+                updating.set(false);
             }
         });
         t.setDaemon(true);

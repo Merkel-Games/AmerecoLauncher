@@ -6,12 +6,23 @@ import javafx.scene.control.ButtonType;
 import ru.amereco.amerecolauncher.utils.Downloader;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
+import java.net.URLDecoder;
+import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Обновлятор самого лаунчера.
@@ -22,10 +33,14 @@ import java.nio.file.attribute.PosixFilePermissions;
  *
  * <h3>Поддерживаемые платформы и форматы:</h3>
  * <ul>
- *   <li>Windows — {@code exe}, {@code msi}</li>
- *   <li>macOS   — {@code dmg}, {@code pkg}</li>
- *   <li>Linux   — {@code AppImage}, {@code deb}, {@code rpm}</li>
+ *   <li>Windows x64 — {@code exe}</li>
+ *   <li>macOS arm64 — {@code pkg}</li>
+ *   <li>Linux x64   — {@code deb} / {@code rpm} (по пакетному менеджеру)</li>
  * </ul>
+ *
+ * <p>Установка из AppImage или запуск голого jar не обновляются пакетом —
+ * для них открывается прямая ссылка на загрузку в браузере
+ * (см. {@link UpdateMode} и {@link #askToUpdateAuto()}).
  *
  * <h3>Отключение автообновления (любым из трёх способов):</h3>
  * <ol>
@@ -45,7 +60,7 @@ import java.nio.file.attribute.PosixFilePermissions;
  *
  * // В фоновом потоке:
  * if (updater.checkUpdates()) {
- *     updater.askToUpdate();  // показывает Alert на FX-потоке
+ *     updater.askToUpdateAuto();  // показывает Alert на FX-потоке
  * }
  * }</pre>
  */
@@ -56,8 +71,23 @@ public class LauncherUpdater extends Downloader {
     private static final String GITHUB_API_LATEST =
             "https://api.github.com/repos/Merkel-Games/AmerecoLauncher/releases/latest";
 
+    /** Схема имён ассетов: {@code AmerecoLauncher-<os>-<arch>.<ext>}. */
+    private static final String ASSET_NAME_TEMPLATE = "AmerecoLauncher-%s-%s.%s";
+
     private static final String DOWNLOAD_URL_TEMPLATE =
-            "https://github.com/Merkel-Games/AmerecoLauncher/releases/latest/download/AmerecoLauncher.%s";
+            "https://github.com/Merkel-Games/AmerecoLauncher/releases/latest/download/%s";
+
+    /** Файл с контрольными суммами всех ассетов релиза (формат {@code sha256sum}). */
+    private static final String CHECKSUMS_FILE = "SHA256SUMS";
+
+    /** Сколько ждём, прежде чем считать, что установщик успешно стартовал. */
+    private static final int LAUNCH_CHECK_SECONDS = 5;
+
+    /** Потолок ожидания установки там, где мы дожидаемся её завершения. */
+    private static final int INSTALL_TIMEOUT_MINUTES = 15;
+
+    /** Через сколько временная папка обновления считается мусором и удаляется. */
+    private static final long STALE_TMP_AGE_MS = 24L * 60 * 60 * 1000;
 
     // ─── Тип установщика для текущей платформы ──────────────────────────────────
 
@@ -88,17 +118,43 @@ public class LauncherUpdater extends Downloader {
 
     // ─── Поля ───────────────────────────────────────────────────────────────────
 
+    /** Как именно обновляется эта установка лаунчера. */
+    public enum UpdateMode {
+        /** Скачать установщик и запустить его. */
+        INSTALLER,
+        /** Открыть прямую ссылку в браузере — пользователь ставит сам. */
+        BROWSER
+    }
+
     private final InstallerType installerType;
     private final boolean updateDisabled;
 
-    /** Версия, найденная при последнем вызове {@link #checkUpdates()}. */
-    private String latestVersion = null;
+    /** Слаг ОС в имени ассета: {@code linux} / {@code windows} / {@code mac}. */
+    private final String platformSlug;
+
+    /** Слаг архитектуры в имени ассета: {@code x64} / {@code aarch64}. */
+    private final String archSlug;
+
+    private final UpdateMode updateMode;
+
+    /** Версия, найденная при последнем вызове {@link #checkUpdates()}.
+     *  volatile: пишется из фонового потока проверки, читается из FX-потока. */
+    private volatile String latestVersion = null;
+
+    /** Версия, от которой пользователь отказался — по ней больше не спрашиваем. */
+    private volatile String declinedVersion = null;
+
+    /** Диалог уже показан или обновление идёт — второй по таймеру не открываем. */
+    private final AtomicBoolean asking = new AtomicBoolean(false);
 
     // ─── Конструктор ────────────────────────────────────────────────────────────
 
     public LauncherUpdater() {
         this.installerType = detectInstallerType();
         this.updateDisabled = isUpdateDisabled();
+        this.platformSlug = detectPlatformSlug();
+        this.archSlug = detectArchSlug();
+        this.updateMode = detectUpdateMode();
     }
 
     // ─── Публичный API (реализация абстрактных методов Downloader) ───────────────
@@ -143,57 +199,259 @@ public class LauncherUpdater extends Downloader {
     }
 
     /**
-     * Скачивает установщик новой версии и запускает его.
+     * Скачивает установщик новой версии, сверяет его SHA-256 с {@code SHA256SUMS}
+     * из релиза и запускает.
      *
      * <p>Использует {@link #downloadToPath(URI, Path)} из {@link Downloader}
-     * (с {@code followRedirects(ALWAYS)}) и {@link #updateStage}/{@link #updateStep}
+     * и {@link #updateStage}/{@link #updateStep}
      * из {@link ru.amereco.amerecolauncher.utils.ProgressSupplier}.
      *
-     * <p>После успешного запуска установщика лаунчер завершает процесс через
-     * {@code System.exit(0)}, чтобы не блокировать файлы на Windows.
+     * <p>Любая проблема (нет ассета под платформу, не сошлась контрольная сумма,
+     * отказ в правах, ошибка пакетного менеджера) бросает {@link IOException} —
+     * вызывающий код показывает пользователю ошибку.
+     *
+     * <p>Для deb/rpm метод дожидается конца установки и сообщает результат.
+     * На Windows и macOS ждать нельзя (заблокированные файлы), поэтому лаунчер
+     * выходит сразу после подтверждённого старта установщика.
+     *
+     * @throws IOException если самообновление недоступно или что-то пошло не так
      */
     @Override
     public void download() throws IOException, InterruptedException {
-        // ВНИМАНИЕ: механизм самообновления отключён (вызов LAUNCHER закомментирован
-        // в MainController). Перед включением ОБЯЗАТЕЛЬНО добавить проверку подписи/хэша
-        // скачанного установщика — иначе RCE с эскалацией через pkexec/sudo (см. отчёт B3).
-        String url = String.format(DOWNLOAD_URL_TEMPLATE, installerType.ext);
+        if (updateMode == UpdateMode.BROWSER) {
+            throw new IOException("Для этого способа установки самообновление недоступно — "
+                    + "скачайте пакет вручную");
+        }
+        if (!hasAssetForThisPlatform()) {
+            throw new IOException("Нет сборки для " + platformSlug + "-" + archSlug
+                    + " — скачайте пакет вручную");
+        }
+
+        purgeStaleTempDirs();
+
         Path tmpDir = Files.createTempDirectory("amereco-update-");
-        Path installer = tmpDir.resolve("AmerecoLauncher-update." + installerType.ext);
+        Path installer = tmpDir.resolve(assetName());
 
         boolean launched = false;
         try {
-            resetProgress(1);
+            resetProgress(2);
             updateStage("Скачивание обновления лаунчера...");
-            updateStep(installerType.ext);
+            updateStep(assetName());
 
-            downloadToPath(URI.create(url), installer);
+            downloadToPath(URI.create(assetUrl()), installer);
+            updateStepAndIncProgress("Установщик скачан: " + assetName());
 
-            updateStepAndIncProgress("Установщик скачан: " + installer.getFileName());
+            updateStage("Проверка целостности...");
+            verifyChecksum(installer);
+            updateStepAndIncProgress("SHA-256 совпадает");
+
             updateStage("Запуск установщика...");
-
-            // Права на выполнение для Unix-форматов
             grantExecutePermission(installer);
-
-            Process process = launchInstaller(installer);
-
-            // Ждём подтверждения, что процесс установщика запущен (до 5 секунд)
-            for (int i = 0; i < 50; i++) {
-                if (process.isAlive()) {
-                    launched = true;
-                    System.exit(0);
-                }
-                Thread.sleep(100);
-            }
+            launchInstallerChecked(installer);
+            launched = true;
         } finally {
-            // Установщик запущен → System.exit уже вызван (сюда не дойдём).
-            // Иначе (ошибка/установщик не стартовал) — чистим временную папку.
+            // Установщик не стартовал — за собой убираем сразу.
             if (!launched) {
                 deleteQuietly(tmpDir);
             }
         }
-        // Процесс не стартовал за 5 секунд или сразу завершился — выходим с ошибкой
-        System.exit(1);
+
+        if (waitsForInstaller()) {
+            // Установка уже завершилась — временные файлы больше не нужны.
+            deleteQuietly(tmpDir);
+            updateStage("Обновление установлено");
+            showInstalledDialog();
+        }
+        // Иначе установщик всё ещё работает с файлом внутри tmpDir и удалять его
+        // сейчас нельзя; остатки подчистит purgeStaleTempDirs() при следующем запуске.
+        System.exit(0);
+    }
+
+    /**
+     * Сообщает, что новая версия установлена, и ждёт закрытия диалога,
+     * чтобы пользователь успел его прочитать до выхода.
+     */
+    private static void showInstalledDialog() throws InterruptedException {
+        CountDownLatch closed = new CountDownLatch(1);
+        Platform.runLater(() -> {
+            try {
+                Alert done = new Alert(Alert.AlertType.INFORMATION,
+                        "Новая версия установлена.\nЗапустите лаунчер заново.",
+                        ButtonType.OK);
+                done.setTitle("Обновление AmerecoLauncher");
+                done.setHeaderText(null);
+                done.showAndWait();
+            } finally {
+                closed.countDown();
+            }
+        });
+        // Ограничение по времени — чтобы не зависнуть навсегда, если FX-поток недоступен.
+        closed.await(2, TimeUnit.MINUTES);
+    }
+
+    /** Имя ассета для текущей ОС/архитектуры: {@code AmerecoLauncher-<os>-<arch>.<ext>}. */
+    private String assetName() {
+        return String.format(ASSET_NAME_TEMPLATE, platformSlug, archSlug, installerType.ext);
+    }
+
+    /** Прямая ссылка на ассет в последнем релизе. */
+    private String assetUrl() {
+        return String.format(DOWNLOAD_URL_TEMPLATE, assetName());
+    }
+
+    /**
+     * Есть ли в релизах сборка под текущую пару ОС/архитектура.
+     * Держать в соответствии с матрицей в {@code .github/workflows/publish-packages.yml}.
+     */
+    private boolean hasAssetForThisPlatform() {
+        return switch (platformSlug) {
+            case "windows", "linux" -> "x64".equals(archSlug);   // ubuntu-latest / windows-latest
+            case "mac" -> "aarch64".equals(archSlug);            // macos-latest = Apple Silicon
+            default -> false;
+        };
+    }
+
+    /**
+     * Сверяет SHA-256 скачанного файла с {@code SHA256SUMS} из релиза.
+     *
+     * <p>Проверка fail-closed: нет файла сумм или нет строки под наш ассет —
+     * установка не начинается. Без этого лаунчер запускал бы непроверенный
+     * бинарник, на Linux — ещё и от root через pkexec.
+     */
+    private void verifyChecksum(Path installer) throws IOException, InterruptedException {
+        String expected = fetchExpectedSha256(assetName());
+        String actual = sha256(installer);
+        if (!actual.equalsIgnoreCase(expected)) {
+            throw new IOException("Контрольная сумма не совпала для " + assetName()
+                    + "\nожидалась: " + expected + "\nполучена:  " + actual);
+        }
+    }
+
+    /** Достаёт ожидаемую сумму для конкретного ассета из {@code SHA256SUMS}. */
+    private String fetchExpectedSha256(String asset) throws IOException, InterruptedException {
+        String sums;
+        try {
+            sums = httpGet(URI.create(String.format(DOWNLOAD_URL_TEMPLATE, CHECKSUMS_FILE)));
+        } catch (IOException e) {
+            throw new IOException("Не удалось получить " + CHECKSUMS_FILE
+                    + " — установка непроверенного файла отменена", e);
+        }
+        for (String line : sums.split("\\R")) {
+            // формат sha256sum: "<hex>  <имя>" ('*' перед именем — бинарный режим)
+            String[] parts = line.trim().split("\\s+", 2);
+            if (parts.length == 2 && parts[1].replaceFirst("^\\*", "").equals(asset)) {
+                return parts[0];
+            }
+        }
+        throw new IOException("В " + CHECKSUMS_FILE + " нет записи для " + asset);
+    }
+
+    private static String sha256(Path file) throws IOException {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            try (InputStream in = Files.newInputStream(file);
+                 DigestInputStream dis = new DigestInputStream(in, md)) {
+                byte[] buf = new byte[8192];
+                while (dis.read(buf) != -1) { /* streaming digest */ }
+            }
+            StringBuilder sb = new StringBuilder();
+            for (byte b : md.digest()) {
+                sb.append(String.format("%02x", b & 0xFF));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IOException("SHA-256 недоступен", e);
+        }
+    }
+
+    /**
+     * Запускает установщик.
+     *
+     * <p>Для deb/rpm ждём полного завершения установки — на Linux файлы запущенного
+     * лаунчера не блокируются, поэтому спешить с выходом незачем, зато можно поймать
+     * отказ polkit, отсутствие терминала и ошибки пакетного менеджера и показать их
+     * пользователю.
+     *
+     * <p>На Windows и macOS ждать нельзя (заблокированные файлы, установщик сам
+     * попросит закрыть приложение), поэтому проверяем только, что процесс не упал
+     * сразу: жив по истечении {@link #LAUNCH_CHECK_SECONDS} — установщик работает;
+     * код 0 — команда-обёртка ({@code open}) передала управление системе;
+     * ненулевой код — ошибка.
+     */
+    private void launchInstallerChecked(Path installer) throws IOException, InterruptedException {
+        Path log = installer.resolveSibling("installer.log");
+        Process process = launchInstaller(installer, log);
+
+        if (waitsForInstaller()) {
+            updateStage("Установка... подтвердите права администратора");
+            if (!process.waitFor(INSTALL_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
+                process.destroy();
+                throw new IOException("Установка не завершилась за "
+                        + INSTALL_TIMEOUT_MINUTES + " мин" + tailOf(log));
+            }
+            int code = process.exitValue();
+            if (code != 0) {
+                throw new IOException(describeInstallExit(code) + tailOf(log));
+            }
+            return;
+        }
+
+        if (process.waitFor(LAUNCH_CHECK_SECONDS, TimeUnit.SECONDS)
+                && process.exitValue() != 0) {
+            throw new IOException("Установщик завершился с кодом " + process.exitValue()
+                    + tailOf(log));
+        }
+    }
+
+    /**
+     * Можно ли дождаться окончания установки, не мешая ей.
+     *
+     * <p>Только для пакетных менеджеров Linux: на Windows файлы запущенного процесса
+     * заблокированы, на macOS {@code open} возвращает управление сразу и ждать нечего.
+     */
+    private boolean waitsForInstaller() {
+        return installerType == InstallerType.DEB || installerType == InstallerType.RPM;
+    }
+
+    /** Расшифровывает коды выхода pkexec / оболочки в человеческий текст. */
+    private static String describeInstallExit(int code) {
+        return switch (code) {
+            case 126 -> "Установка отменена: права администратора не подтверждены";
+            case 127 -> "Не удалось запустить установщик: команда недоступна";
+            default -> "Установщик завершился с кодом " + code;
+        };
+    }
+
+    /** Последние строки лога установщика — для текста ошибки. */
+    private static String tailOf(Path log) {
+        try {
+            String text = Files.readString(log, StandardCharsets.UTF_8).strip();
+            if (text.isEmpty()) {
+                return "";
+            }
+            return ":\n" + (text.length() > 500 ? text.substring(text.length() - 500) : text);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** Удаляет забытые каталоги прошлых обновлений из системного temp. */
+    private static void purgeStaleTempDirs() {
+        Path tmp = Path.of(System.getProperty("java.io.tmpdir", "."));
+        long cutoff = System.currentTimeMillis() - STALE_TMP_AGE_MS;
+        try (java.util.stream.Stream<Path> s = Files.list(tmp)) {
+            s.filter(p -> p.getFileName().toString().startsWith("amereco-update-"))
+             .filter(Files::isDirectory)
+             .filter(p -> {
+                 try {
+                     return Files.getLastModifiedTime(p).toMillis() < cutoff;
+                 } catch (IOException e) {
+                     return false;
+                 }
+             })
+             .forEach(LauncherUpdater::deleteQuietly);
+        } catch (IOException ignored) {
+        }
     }
 
     private static void deleteQuietly(Path dir) {
@@ -222,34 +480,64 @@ public class LauncherUpdater extends Downloader {
      * <p>Метод потокобезопасен: внутри использует {@code Platform.runLater}.
      */
     public void askToUpdate() {
+        if (!beginAsking()) return;
+
         Platform.runLater(() -> {
+            String versionInfo = latestVersion != null ? " (" + latestVersion + ")" : "";
             Alert alert = new Alert(
                     Alert.AlertType.CONFIRMATION,
-                    "Доступно обновление лаунчера!\nОбновить сейчас?",
+                    "Доступно обновление лаунчера" + versionInfo + "!\nОбновить сейчас?",
                     ButtonType.NO,
                     ButtonType.YES
             );
             alert.setTitle("Обновление AmerecoLauncher");
             alert.setHeaderText(null);
 
-            alert.showAndWait().ifPresent(btn -> {
-                if (btn == ButtonType.YES) {
-                    new Thread(() -> {
-                        try {
-                            download();
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                            Platform.runLater(() -> {
-                                Alert err = new Alert(Alert.AlertType.ERROR,
-                                        "Ошибка при обновлении:\n" + e.getMessage(),
-                                        ButtonType.OK);
-                                err.showAndWait();
-                            });
-                        }
-                    }, "launcher-updater").start();
-                }
-            });
+            var answer = alert.showAndWait();
+            if (answer.isPresent() && answer.get() == ButtonType.YES) {
+                Thread t = new Thread(() -> {
+                    try {
+                        download();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        // Обновление сорвалось — разрешаем спросить снова.
+                        asking.set(false);
+                        Platform.runLater(() -> {
+                            Alert err = new Alert(Alert.AlertType.ERROR,
+                                    "Ошибка при обновлении:\n" + e.getMessage(),
+                                    ButtonType.OK);
+                            err.showAndWait();
+                        });
+                    }
+                }, "launcher-updater");
+                t.setDaemon(true);
+                t.start();
+            } else {
+                endAsking(true);
+            }
         });
+    }
+
+    /**
+     * Резервирует право показать диалог.
+     *
+     * @return {@code false} если диалог уже открыт, обновление идёт или от этой
+     *         версии уже отказались — тогда показывать ничего не нужно
+     */
+    private boolean beginAsking() {
+        String version = latestVersion;
+        if (version != null && version.equals(declinedVersion)) {
+            return false;
+        }
+        return asking.compareAndSet(false, true);
+    }
+
+    /** Освобождает диалог; {@code declined} — запомнить отказ по текущей версии. */
+    private void endAsking(boolean declined) {
+        if (declined) {
+            declinedVersion = latestVersion;
+        }
+        asking.set(false);
     }
 
     /**
@@ -266,36 +554,41 @@ public class LauncherUpdater extends Downloader {
      * Метод потокобезопасен.
      */
     public void askToUpdateBrowser() {
+        if (!beginAsking()) return;
+
         Platform.runLater(() -> {
             String versionInfo = latestVersion != null ? " (" + latestVersion + ")" : "";
+            String what = hasAssetForThisPlatform()
+                    ? "Скачать " + assetName() + " и закрыть лаунчер?"
+                    : "Открыть страницу релиза в браузере?";
             Alert alert = new Alert(
                     Alert.AlertType.CONFIRMATION,
-                    "Доступно обновление лаунчера" + versionInfo + "!\n" +
-                    "Открыть страницу загрузки в браузере?",
+                    "Доступно обновление лаунчера" + versionInfo + "!\n" + what,
                     ButtonType.NO,
                     ButtonType.YES
             );
             alert.setTitle("Обновление AmerecoLauncher");
             alert.setHeaderText(null);
 
-            alert.showAndWait().ifPresent(btn -> {
-                if (btn == ButtonType.YES) {
-                    openDownloadInBrowser();
-                    System.exit(0);
-                }
-            });
+            var answer = alert.showAndWait();
+            if (answer.isPresent() && answer.get() == ButtonType.YES) {
+                openDownloadInBrowser();
+                System.exit(0);
+            } else {
+                endAsking(true);
+            }
         });
     }
 
     /**
-     * Открывает прямую ссылку на установщик для текущей платформы
-     * в системном браузере по умолчанию.
+     * Открывает в системном браузере прямую ссылку на пакет для текущей
+     * ОС/архитектуры — скачивание начнётся сразу, без промежуточных страниц.
      *
-     * <p>Браузер начнёт скачивание автоматически — GitHub отдаёт файл
-     * по прямой ссылке без редиректа на страницу.
+     * <p>Если сборки под эту платформу нет, открывается страница релиза,
+     * чтобы пользователь выбрал файл сам.
      */
     public void openDownloadInBrowser() {
-        String url = String.format(DOWNLOAD_URL_TEMPLATE, installerType.ext);
+        String url = hasAssetForThisPlatform() ? assetUrl() : RELEASES_PAGE_URL;
         try {
             String os = System.getProperty("os.name", "").toLowerCase();
             ProcessBuilder pb;
@@ -313,22 +606,39 @@ public class LauncherUpdater extends Downloader {
     }
 
     /**
-     * Полный цикл: проверка → диалог → загрузка (встроенная).
+     * Показывает диалог обновления способом, подходящим для этой установки:
+     * пакетную ставим сами, AppImage/jar отправляем в браузер.
+     *
+     * <p>Это точка входа по умолчанию — используйте её вместо
+     * {@link #askToUpdate()} / {@link #askToUpdateBrowser()}.
+     */
+    public void askToUpdateAuto() {
+        if (updateMode == UpdateMode.BROWSER || !hasAssetForThisPlatform()) {
+            askToUpdateBrowser();
+        } else {
+            askToUpdate();
+        }
+    }
+
+    /**
+     * Полный цикл: проверка → диалог → обновление подходящим способом.
      * Запускается в отдельном потоке, безопасно вызывать из FX-потока.
      */
     public void checkAndUpdate() {
         if (updateDisabled) return;
 
-        new Thread(() -> {
+        Thread t = new Thread(() -> {
             try {
                 if (checkUpdates()) {
-                    askToUpdate();
+                    askToUpdateAuto();
                 }
             } catch (Exception e) {
                 e.printStackTrace();
                 // Не ломаем лаунчер из-за ошибки проверки обновлений
             }
-        }, "launcher-update-check").start();
+        }, "launcher-update-check");
+        t.setDaemon(true);
+        t.start();
     }
 
     /**
@@ -341,7 +651,7 @@ public class LauncherUpdater extends Downloader {
     public void checkAndUpdateBrowser() {
         if (updateDisabled) return;
 
-        new Thread(() -> {
+        Thread t = new Thread(() -> {
             try {
                 if (checkUpdates()) {
                     askToUpdateBrowser();
@@ -349,7 +659,9 @@ public class LauncherUpdater extends Downloader {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        }, "launcher-update-check-browser").start();
+        }, "launcher-update-check-browser");
+        t.setDaemon(true);
+        t.start();
     }
 
     /** Возвращает последнюю версию, найденную при последнем вызове {@link #checkUpdates()},
@@ -361,6 +673,11 @@ public class LauncherUpdater extends Downloader {
     /** Возвращает тип установщика, выбранный для текущей платформы. */
     public InstallerType getInstallerType() {
         return installerType;
+    }
+
+    /** Возвращает способ обновления, определённый для этой установки. */
+    public UpdateMode getUpdateMode() {
+        return updateMode;
     }
 
     /** Возвращает {@code true} если автообновление отключено. */
@@ -381,13 +698,65 @@ public class LauncherUpdater extends Downloader {
     // ─── Приватные вспомогательные методы ───────────────────────────────────────
 
     /**
-     * Запрашивает GitHub Releases API и возвращает тег последней версии
-     * (без префикса "v").
+     * Возвращает тег последней версии (без префикса «v»).
+     *
+     * <p>Основной путь — редирект {@code /releases/latest → /releases/tag/vX.Y.Z}.
+     * Это обычная страница github.com без лимита на неавторизованные запросы,
+     * в отличие от api.github.com с его 60 запросами в час на IP: за общим NAT
+     * (общежитие, мобильный оператор, CGNAT) такой лимит выбирается чужими
+     * запросами независимо от нашего интервала проверок.
+     *
+     * <p>API остаётся запасным вариантом на случай, если формат ссылки изменится.
      */
     private String fetchLatestVersion() throws IOException, InterruptedException {
+        String tag = fetchTagFromRedirect();
+        if (tag == null) {
+            tag = fetchTagFromApi();
+        }
+        return tag.startsWith("v") ? tag.substring(1) : tag;
+    }
+
+    /** Тег из заголовка Location; {@code null}, если ответ не тот, что ожидали. */
+    private String fetchTagFromRedirect() throws InterruptedException {
+        final String marker = "/releases/tag/";
+        try {
+            HttpClient noRedirect = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(5))
+                    .followRedirects(HttpClient.Redirect.NEVER)
+                    .build();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(RELEASES_PAGE_URL))
+                    .timeout(Duration.ofSeconds(30))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .build();
+
+            HttpResponse<Void> response = noRedirect.send(
+                    request, HttpResponse.BodyHandlers.discarding());
+            if (response.statusCode() / 100 != 3) {
+                return null;
+            }
+            String location = response.headers().firstValue("location").orElse(null);
+            if (location == null) {
+                return null;
+            }
+            int at = location.lastIndexOf(marker);
+            if (at < 0) {
+                return null;
+            }
+            String tag = URLDecoder.decode(
+                    location.substring(at + marker.length()), StandardCharsets.UTF_8);
+            return tag.isBlank() ? null : tag;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /** Запасной путь: GitHub Releases API. */
+    private String fetchTagFromApi() throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(GITHUB_API_LATEST))
                 .header("Accept", "application/vnd.github+json")
+                .timeout(Duration.ofSeconds(30))
                 .GET()
                 .build();
 
@@ -402,7 +771,7 @@ public class LauncherUpdater extends Downloader {
         if (tag == null) {
             throw new IOException("Не удалось прочитать tag_name из ответа GitHub");
         }
-        return tag.startsWith("v") ? tag.substring(1) : tag;
+        return tag;
     }
 
     /**
@@ -424,11 +793,99 @@ public class LauncherUpdater extends Downloader {
         if (os.contains("win")) {
             return InstallerType.EXE;
         } else if (os.contains("mac") || os.contains("darwin")) {
-            return InstallerType.DMG;
+            // PKG, а не DMG: это настоящий установщик, который сам положит
+            // приложение в /Applications. DMG требует ручного перетаскивания.
+            return InstallerType.PKG;
+        } else if (System.getenv("APPIMAGE") != null) {
+            // Запущены из AppImage — обновляться нужно тем же форматом.
+            return InstallerType.APP_IMAGE;
         } else {
             // Linux / FreeBSD / прочие Unix
             return detectLinuxInstaller();
         }
+    }
+
+    /**
+     * Определяет, можно ли обновлять эту установку самостоятельно.
+     *
+     * <p>AppImage и голый jar ставить пакетом нельзя: установщик создаст вторую
+     * копию рядом с той, из которой запущен лаунчер, а запущенный файл так и
+     * останется старым. Для них — только загрузка через браузер.
+     */
+    private UpdateMode detectUpdateMode() {
+        if (System.getenv("APPIMAGE") != null) {
+            return UpdateMode.BROWSER;
+        }
+        if (isPlainJarRun()) {
+            return UpdateMode.BROWSER;
+        }
+        // deb/rpm ставим через pkexec. Без него графической авторизации нет,
+        // а запуск в терминале не даёт достоверного кода возврата.
+        if ((installerType == InstallerType.DEB || installerType == InstallerType.RPM)
+                && !commandExists("pkexec")) {
+            return UpdateMode.BROWSER;
+        }
+        return UpdateMode.INSTALLER;
+    }
+
+    /** Страхует ветки, требующие графической авторизации. */
+    private void requirePkexec() throws IOException {
+        if (!commandExists("pkexec")) {
+            throw new IOException("Не найден pkexec — скачайте пакет и установите вручную");
+        }
+    }
+
+    /**
+     * {@code true}, если лаунчер запущен как обычный jar на системной JVM.
+     *
+     * <p>У пакетной установки JRE лежит внутри каталога приложения
+     * ({@code /opt/app/{jre,app.jar}}, {@code AmerecoLauncher.app/Contents/{Home,Resources/app.jar}}),
+     * у запуска через {@code java -jar} — где-то в системе.
+     * Если определить не удалось, считаем установку пакетной (прежнее поведение).
+     */
+    private static boolean isPlainJarRun() {
+        try {
+            var source = LauncherUpdater.class.getProtectionDomain().getCodeSource();
+            if (source == null || source.getLocation() == null) {
+                return false;
+            }
+            Path javaHome = Path.of(System.getProperty("java.home", "")).toRealPath();
+            Path code = Path.of(source.getLocation().toURI()).toRealPath();
+
+            Path dir = code.getParent();
+            for (int i = 0; i < 3 && dir != null; i++, dir = dir.getParent()) {
+                if (javaHome.startsWith(dir)) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Слаг ОС для имени ассета — должен совпадать с {@code project.platform} из pom.xml
+     * ({@code linux} / {@code windows} / {@code mac}).
+     */
+    private static String detectPlatformSlug() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (os.contains("win")) return "windows";
+        if (os.contains("mac") || os.contains("darwin")) return "mac";
+        return "linux";
+    }
+
+    /**
+     * Слаг архитектуры для имени ассета — должен совпадать с {@code project.arch} из pom.xml
+     * ({@code x64} / {@code aarch64}).
+     */
+    private static String detectArchSlug() {
+        String arch = System.getProperty("os.arch", "").toLowerCase();
+        return switch (arch) {
+            case "amd64", "x86_64", "x64" -> "x64";
+            case "aarch64", "arm64" -> "aarch64";
+            default -> arch;
+        };
     }
 
     /**
@@ -479,8 +936,11 @@ public class LauncherUpdater extends Downloader {
 
     /**
      * Запускает скачанный установщик нативной командой для каждого формата.
+     *
+     * <p>Вывод уходит в файл, а не в пайп: лаунчер завершается сразу после старта
+     * установщика, и незакрытый пайп убивал бы его по SIGPIPE на первой же записи.
      */
-    private Process launchInstaller(Path installer) throws IOException {
+    private Process launchInstaller(Path installer, Path log) throws IOException {
         String path = installer.toAbsolutePath().toString();
         ProcessBuilder pb;
 
@@ -493,8 +953,9 @@ public class LauncherUpdater extends Downloader {
                 pb = new ProcessBuilder("msiexec", "/i", path, "/qb");
 
             case DMG ->
-                // Монтируем образ, macOS сам откроет Finder
-                pb = new ProcessBuilder("hdiutil", "attach", path, "-nobrowse");
+                // Монтируем образ и показываем том в Finder — без -nobrowse,
+                // иначе пользователь не увидит вообще ничего.
+                pb = new ProcessBuilder("hdiutil", "attach", path);
 
             case PKG ->
                 // open запросит пароль через системный GUI
@@ -503,27 +964,18 @@ public class LauncherUpdater extends Downloader {
             case APP_IMAGE ->
                 pb = new ProcessBuilder(path);
 
+            // Ветки с xterm убраны намеренно: xterm есть далеко не везде, а его код
+            // возврата не отражает результат команды внутри — провалившаяся установка
+            // выглядела бы успешной. Без pkexec установка идёт через браузер вручную.
             case DEB -> {
-                if (commandExists("pkexec")) {
-                    // pkexec показывает graphical sudo без терминала
-                    pb = new ProcessBuilder("pkexec", "apt", "install", "-y", path);
-                } else {
-                    pb = new ProcessBuilder(
-                            "sh", "-c",
-                            "xterm -e 'sudo dpkg -i \"" + path + "\" && sudo apt-get install -f -y'"
-                    );
-                }
+                requirePkexec();
+                // pkexec показывает graphical sudo без терминала
+                pb = new ProcessBuilder("pkexec", "apt", "install", "-y", path);
             }
 
             case RPM -> {
-                if (commandExists("pkexec")) {
-                    pb = new ProcessBuilder("pkexec", "rpm", "-Uvh", path);
-                } else {
-                    pb = new ProcessBuilder(
-                            "sh", "-c",
-                            "xterm -e 'sudo rpm -Uvh \"" + path + "\"'"
-                    );
-                }
+                requirePkexec();
+                pb = new ProcessBuilder("pkexec", "rpm", "-Uvh", path);
             }
 
             default -> throw new UnsupportedOperationException(
@@ -531,6 +983,7 @@ public class LauncherUpdater extends Downloader {
         }
 
         pb.redirectErrorStream(true);
+        pb.redirectOutput(ProcessBuilder.Redirect.to(log.toFile()));
         return pb.start();
     }
 

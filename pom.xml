@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>ru.amereco</groupId>
     <artifactId>AmerecoLauncher</artifactId>
-    <version>1.1.1</version>
+    <version>1.2.0</version>
     <name>Amereco Launcher</name>
     <organization>
         <name>Amereco Minecraft Server</name>
@@ -382,7 +382,10 @@
                 </property>
             </activation>
             <properties>               
-                <jdk.version>17</jdk.version>
+                <!-- 21, а не 17: тот же модпак уже работает на Temurin 21 на сервере,
+                     Java 21 даёт актуальный Shenandoah для клиентского профиля GC,
+                     и это выравнивает канал javapackager с jdeploy (package.json). -->
+                <jdk.version>21</jdk.version>
                 <jdk.dest>${project.build.directory}/jdk</jdk.dest>
                 <jdk.dest2></jdk.dest2>
             </properties>

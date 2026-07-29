@@ -105,14 +105,43 @@ jobs:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
 
-      - name: Strip version from filenames
+      # Артефакты приходят как AmerecoLauncher-<version>-<os>-<arch>.<ext>
+      # (имя задаётся антраном rename-package-artifacts в pom.xml).
+      # Убираем ТОЛЬКО версию — итог: AmerecoLauncher-<os>-<arch>.<ext>.
+      # Стабильное имя нужно для прямых ссылок вида
+      # releases/latest/download/AmerecoLauncher-linux-x64.deb (см. LauncherUpdater).
+      - name: Normalize asset names (name-os-arch.ext)
+        shell: bash
         run: |
-          find . -name "AmerecoLauncher*" -type f | while read f; do
-            newname=$(echo "$f" | sed -E 's/AmerecoLauncher-[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)*/AmerecoLauncher/')
-            if [ "$f" != "$newname" ]; then
-              mv "$f" "$newname"
+          set -euo pipefail
+          find . -type f -name 'AmerecoLauncher-*' -print | while IFS= read -r f; do
+            dir=$(dirname "$f")
+            base=$(basename "$f")
+            new=$(printf '%s' "$base" | sed -E \
+              -e 's/^(AmerecoLauncher)-[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?-(linux|windows|mac)-/\1-\4-/' \
+              -e 's/^(AmerecoLauncher)-[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?\.jar$/\1.jar/')
+            if [ "$base" != "$new" ]; then
+              echo "rename: $base -> $new"
+              mv -f "$f" "$dir/$new"
             fi
           done
+
+      # Клиент (LauncherUpdater) обязан сверить SHA-256 скачанного установщика
+      # с этим файлом и отказаться от установки, если суммы нет или она не сошлась.
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          find . -type f -name 'AmerecoLauncher*' -print0 \
+            | sort -z \
+            | while IFS= read -r -d '' f; do
+                ( cd "$(dirname "$f")" && sha256sum "$(basename "$f")" )
+              done > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: List release assets
+        shell: bash
+        run: find . -type f -name 'AmerecoLauncher*' -printf '%f\t%s\n' | sort
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -126,6 +155,7 @@ jobs:
             AmerecoLauncher*/AmerecoLauncher*.pkg
             AmerecoLauncher*/AmerecoLauncher*.dmg
             AmerecoLauncher*/AmerecoLauncher*.jar
+            SHA256SUMS
           tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
