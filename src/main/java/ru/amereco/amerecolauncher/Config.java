@@ -40,7 +40,17 @@ public class Config {
     }
 
 
-    private static Config instance;
+    /** volatile: {@link #safe()} читает поле без блокировки. */
+    private static volatile Config instance;
+
+    /**
+     * Идёт ли прямо сейчас {@link #load()} в этом потоке.
+     *
+     * <p>Нужно крашрепортеру: если исключение вылетело <b>внутри</b> загрузки конфига,
+     * обращение к {@code get()} из обработчика ушло бы в бесконечную рекурсию
+     * ({@code get} → {@code load} → падение → {@code get} → …).
+     */
+    private static final ThreadLocal<Boolean> loading = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     @Expose
     public String mainDir;
@@ -67,6 +77,29 @@ public class Config {
     /** Дополнительные аргументы JVM, через пробел. */
     @Expose
     public String extraJvmArgs;
+
+    /**
+     * Разрешена ли автоматическая отправка отчётов об ошибках.
+     * По умолчанию {@code false}: согласие должно быть явным (opt-in), а не
+     * подразумеваемым — иначе это не согласие.
+     */
+    @Expose
+    public boolean diagConsent;
+
+    /** Прикладывать ли к отчёту логи лаунчера и игры. Отдельный тумблер. */
+    @Expose
+    public boolean diagSendLogs;
+
+    /**
+     * Версия текста согласия, под которым игрок дал разрешение.
+     * Если текст изменится, старое согласие перестанет считаться действующим.
+     */
+    @Expose
+    public String diagConsentVersion;
+
+    /** Когда согласие было дано, unix-время в секундах. */
+    @Expose
+    public long diagConsentTs;
 
     private Config() {
         // Значения по умолчанию
@@ -122,6 +155,34 @@ public class Config {
         features.putIfAbsent("profile_rpcraft", true);
         features.putIfAbsent("profile_rpcraft_admin", false);
         features.putIfAbsent("profile_rpcraft_ultra", false);
+
+        // Согласие, данное под другой редакцией текста, недействительно:
+        // игрок соглашался на другой состав данных.
+        String currentConsent = properties.getProperty("diagConsentVersion");
+        if (diagConsent && currentConsent != null
+                && !currentConsent.equals(diagConsentVersion)) {
+            diagConsent = false;
+            diagSendLogs = false;
+        }
+
+        registerSecrets();
+    }
+
+    /**
+     * Сообщает {@link ru.amereco.amerecolauncher.diag.Redactor} значения, которые
+     * нельзя выпускать ни в лог, ни в отчёт об ошибке.
+     *
+     * <p>Регулярки ловят секреты по имени ключа ({@code --accessToken abc}), но голый
+     * токен внутри текста исключения так не поймать — только сравнением с живым
+     * значением. Поэтому список пополняется здесь, при каждой загрузке и сохранении.
+     */
+    private void registerSecrets() {
+        ru.amereco.amerecolauncher.diag.Redactor.addSecret(accessToken);
+        ru.amereco.amerecolauncher.diag.Redactor.addSecret(clientId);
+        ru.amereco.amerecolauncher.diag.Redactor.addSecret(uuid);
+        // Имя пользователя ОС — отдельным механизмом: оно обычно короче порога
+        // для литеральной замены, а подстрокой его вырезать нельзя.
+        ru.amereco.amerecolauncher.diag.Redactor.addWordSecret(System.getProperty("user.name"));
     }
 
     public static synchronized Config get() {
@@ -131,31 +192,63 @@ public class Config {
         return instance;
     }
 
+    /**
+     * Конфиг, если он уже загружен, иначе попытка загрузить.
+     *
+     * <p>Отличие от {@link #get()} — метод никогда не бросает и никогда не уходит
+     * в рекурсию: вызванный из обработчика ошибки, случившейся посреди загрузки,
+     * он вернёт {@code null}, а не свалится в {@code StackOverflowError}.
+     *
+     * @return конфиг или {@code null}, если его сейчас нельзя получить
+     */
+    public static Config safe() {
+        Config current = instance;
+        if (current != null) {
+            return current;
+        }
+        if (Boolean.TRUE.equals(loading.get())) {
+            return null;
+        }
+        try {
+            return get();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     public static synchronized void load() {
-        Path configPath = Path.of(projectDir.configDir, CONFIG_FILE);
-        Config loaded = null;
-        if (Files.exists(configPath)) {
-            try {
-                String json = Files.readString(configPath);
-                loaded = gson.fromJson(json, Config.class);
-            } catch (Exception e) {
-                // Ловим не только IOException, но и JsonSyntaxException (битый JSON) —
-                // иначе повреждённый config.json роняет запуск лаунчера.
-                System.err.println("Failed to load config: " + e.getMessage());
+        loading.set(Boolean.TRUE);
+        try {
+            Path configPath = Path.of(projectDir.configDir, CONFIG_FILE);
+            Config loaded = null;
+            if (Files.exists(configPath)) {
+                try {
+                    String json = Files.readString(configPath);
+                    loaded = gson.fromJson(json, Config.class);
+                } catch (Exception e) {
+                    // Ловим не только IOException, но и JsonSyntaxException (битый JSON) —
+                    // иначе повреждённый config.json роняет запуск лаунчера.
+                    System.err.println("Failed to load config: " + e.getMessage());
+                }
             }
+            if (loaded == null) {
+                loaded = new Config(); // fallback (конструктор уже нормализует)
+            } else {
+                loaded.normalize(); // backfill отсутствующих полей после Gson
+            }
+            instance = loaded;
+        } finally {
+            loading.set(Boolean.FALSE);
         }
-        if (loaded == null) {
-            loaded = new Config(); // fallback (конструктор уже нормализует)
-        } else {
-            loaded.normalize(); // backfill отсутствующих полей после Gson
-        }
-        instance = loaded;
     }
 
     public synchronized void save() {
         if (instance == null) {
             instance = new Config();
         }
+        // Токен мог смениться после логина или обновления сессии — редактор должен
+        // узнать новое значение раньше, чем оно попадёт в чей-нибудь стектрейс.
+        instance.registerSecrets();
 
         Path configPath = Path.of(projectDir.configDir, CONFIG_FILE);
         try {

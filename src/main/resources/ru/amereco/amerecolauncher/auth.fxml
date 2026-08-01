@@ -26,7 +26,7 @@
                </font></Label>
             <ImageView fitHeight="150.0" fitWidth="200.0" pickOnBounds="true" preserveRatio="true">
                <image>
-                  <Image url="@images/logo.png" />
+                  <Image url="@images/logo_new.png" />
                </image>
             </ImageView>
             <GridPane maxHeight="60.0" maxWidth="300.0" minHeight="-Infinity" prefHeight="62.0" prefWidth="399.0" vgap="10.0">

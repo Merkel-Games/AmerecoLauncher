@@ -95,6 +95,28 @@
                          <Font size="10.0" />
                       </font>
                    </Label>
+                  <Label text="Отчёты об ошибках" textFill="WHITE">
+                     <VBox.margin>
+                        <Insets top="10.0" />
+                     </VBox.margin>
+                  </Label>
+                   <CheckBox fx:id="diagConsentCheckbox" mnemonicParsing="false" prefWidth="500.0" text="Отправлять отчёты об ошибках автоматически" textFill="WHITE" wrapText="true" />
+                   <CheckBox fx:id="diagLogsCheckbox" mnemonicParsing="false" prefWidth="500.0" text="Прикладывать логи лаунчера и игры" textFill="WHITE" wrapText="true" />
+                   <Label prefWidth="500.0" text="Отправляются текст ошибки, стек вызовов, версии лаунчера, Java, ОС и игры. Пароль, токен авторизации, e-mail, IP-адрес, имя пользователя компьютера и игровой чат вырезаются автоматически до отправки. Данные хранятся на amereco.ru не дольше 90 дней." textFill="#9e9e9e" wrapText="true">
+                      <font>
+                         <Font size="10.0" />
+                      </font>
+                   </Label>
+                   <Button mnemonicParsing="false" onAction="#sendManualReport" prefHeight="30.0" prefWidth="500.0" style="-fx-font-size: 12;" styleClass="ninetile-button" text="Отправить отчёт разработчику" textFill="WHITE">
+                      <font>
+                         <Font size="12.0" />
+                      </font>
+                   </Button>
+                   <Label prefWidth="500.0" text="Если что-то работает не так, но лаунчер не падает — опишите проблему и отправьте лог вручную." textFill="#9e9e9e" wrapText="true">
+                      <font>
+                         <Font size="10.0" />
+                      </font>
+                   </Label>
                </children>
             </VBox>
          </content>

@@ -14,11 +14,15 @@ import javafx.fxml.Initializable;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.Slider;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
+import ru.amereco.amerecolauncher.diag.CrashReporter;
 import ru.amereco.amerecolauncher.minecraft.JvmTuning;
 
 /**
@@ -38,6 +42,8 @@ public class SettingsController implements Initializable {
     @FXML private CheckBox memoryAutoCheckbox;
     @FXML private Slider memorySlider;
     @FXML private Label memoryLabel;
+    @FXML private CheckBox diagConsentCheckbox;
+    @FXML private CheckBox diagLogsCheckbox;
 
     private void load() {
         mainDirInput.setText(config.mainDir);
@@ -54,6 +60,10 @@ public class SettingsController implements Initializable {
         memorySlider.setValue(auto ? JvmTuning.recommendedHeapMb() : config.maxMemoryMb);
         memorySlider.setDisable(auto);
         updateMemoryLabel();
+
+        diagConsentCheckbox.setSelected(config.diagConsent);
+        diagLogsCheckbox.setSelected(config.diagSendLogs);
+        diagLogsCheckbox.setDisable(!config.diagConsent);
     }
 
     private void save() {
@@ -64,6 +74,16 @@ public class SettingsController implements Initializable {
         config.features.put("profile_rpcraft_ultra", rpcraftUltraCheckbox.isSelected());
         // 0 — признак «считать автоматически», см. JvmTuning.heapMb
         config.maxMemoryMb = memoryAutoCheckbox.isSelected() ? 0 : (int) memorySlider.getValue();
+
+        boolean consent = diagConsentCheckbox.isSelected();
+        // Отметку времени и версию текста ставим только в момент включения:
+        // это доказательство того, под какой редакцией согласия оно дано.
+        if (consent && !config.diagConsent) {
+            config.diagConsentVersion = Config.properties.getProperty("diagConsentVersion");
+            config.diagConsentTs = System.currentTimeMillis() / 1000L;
+        }
+        config.diagConsent = consent;
+        config.diagSendLogs = consent && diagLogsCheckbox.isSelected();
     }
 
     private void updateMemoryLabel() {
@@ -89,7 +109,54 @@ public class SettingsController implements Initializable {
         });
         memorySlider.valueProperty().addListener((obs, was, now) -> updateMemoryLabel());
 
+        // Логи без согласия на отчёты не отправляются — тумблер вложенный.
+        diagConsentCheckbox.selectedProperty().addListener((obs, was, on) -> {
+            diagLogsCheckbox.setDisable(!on);
+            if (!on) {
+                diagLogsCheckbox.setSelected(false);
+            }
+        });
+
         load();
+    }
+
+    /**
+     * Ручная отправка отчёта: игрок описывает проблему сам.
+     *
+     * <p>Отдельный канал от автоматического: он нужен, когда лаунчер не падает,
+     * но ведёт себя не так, и работает независимо от согласия на автоотправку —
+     * нажатие кнопки и есть согласие на этот конкретный отчёт.
+     */
+    @FXML
+    private void sendManualReport() {
+        TextArea comment = new TextArea();
+        comment.setPromptText("Что произошло? Что вы делали перед этим?");
+        comment.setWrapText(true);
+        comment.setPrefRowCount(6);
+
+        CheckBox attachLog = new CheckBox("Приложить лог лаунчера");
+        attachLog.setSelected(true);
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Отчёт разработчику");
+        dialog.setHeaderText("Опишите проблему — отчёт уйдёт на amereco.ru");
+        dialog.getDialogPane().setContent(new VBox(10, comment, attachLog));
+        dialog.getDialogPane().getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
+
+        if (dialog.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+            return;
+        }
+        String text = comment.getText();
+        if (text == null || text.isBlank()) {
+            new Alert(Alert.AlertType.WARNING,
+                    "Пустой отчёт отправлять нет смысла — опишите проблему.",
+                    ButtonType.OK).showAndWait();
+            return;
+        }
+        CrashReporter.reportManual(text, attachLog.isSelected());
+        new Alert(Alert.AlertType.INFORMATION,
+                "Спасибо, отчёт поставлен в очередь на отправку.",
+                ButtonType.OK).showAndWait();
     }
 
     @FXML

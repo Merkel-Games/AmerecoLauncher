@@ -8,6 +8,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.*;
 import ru.amereco.amerecolauncher.Config;
+import ru.amereco.amerecolauncher.diag.CrashReporter;
 
 public class MinecraftLauncher {
     private Config config = Config.get();
@@ -148,14 +149,30 @@ public class MinecraftLauncher {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(new File(gameDir.toString()));
 
-        builder.redirectOutput(ProcessBuilder.Redirect.INHERIT).redirectError(ProcessBuilder.Redirect.INHERIT);
+        // Вывод читаем сами, а не наследуем: при Redirect.INHERIT он уходит прямо
+        // в файловые дескрипторы лаунчера, и поймать в нём маркер краша невозможно.
+        // stderr сливаем в stdout — Minecraft печатает маркер именно в stderr,
+        // а порядок строк относительно stdout важен для чтения лога.
+        builder.redirectErrorStream(true);
 
         Process process = builder.start();
+
+        GameCrashDetector detector =
+                new GameCrashDetector(gameDir, CrashReporter.diagDir());
+
+        // Пайп надо вычитывать непрерывно: переполнение его буфера подвешивает игру.
+        Thread pump = new Thread(() -> detector.pump(process.getInputStream()),
+                "minecraft-output");
+        pump.setDaemon(true);
+        pump.start();
+
         int exit = 0;
+        boolean stoppedByUser = false;
         try {
             exit = process.waitFor();
         } catch (InterruptedException exc) {
             Thread.currentThread().interrupt();
+            stoppedByUser = true;
         } finally {
             if (process.isAlive()) {
                 process.destroy();
@@ -169,7 +186,19 @@ public class MinecraftLauncher {
                     process.destroyForcibly();
                 }
             }
+            // Даём дочитать остаток вывода: маркер краша печатается последним,
+            // и без ожидания мы регулярно узнавали бы о падении уже после разбора.
+            try {
+                pump.join(5000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
             System.out.println("Minecraft terminated with exit code " + exit);
+
+            // Игру закрыл сам игрок через лаунчер — это не падение.
+            if (!stoppedByUser) {
+                detector.afterExit(exit);
+            }
         }
     }
 }

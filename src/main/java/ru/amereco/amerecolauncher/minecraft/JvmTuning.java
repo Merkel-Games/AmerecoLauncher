@@ -139,8 +139,28 @@ public final class JvmTuning {
         List<String> flags = new ArrayList<>();
         flags.add(XMS);
         flags.add("-Xmx" + heapMb + "M");
+        errorFileFlag().ifPresent(flags::add);
         flags.addAll(base);
         return flags;
+    }
+
+    /**
+     * Флаг {@code -XX:ErrorFile} — куда JVM игры запишет дамп фатальной ошибки.
+     *
+     * <p>Самые тяжёлые падения клиента (SIGSEGV в драйвере видеокарты) не оставляют
+     * ни краш-репорта Minecraft, ни записи в {@code latest.log}: процесс умирает
+     * мгновенно. Единственный след — этот дамп, и без явного пути он ляжет в рабочий
+     * каталог игры, где лаунчер его не ищет.
+     *
+     * <p>{@code %p} подставляет PID, поэтому дампы разных запусков не затирают друг друга.
+     */
+    private static java.util.Optional<String> errorFileFlag() {
+        java.nio.file.Path dir = ru.amereco.amerecolauncher.diag.CrashReporter.crashDumpDir();
+        if (dir == null) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(
+                "-XX:ErrorFile=" + dir.resolve("hs_err_pid%p.log").toAbsolutePath());
     }
 
     /** Размер кучи из настроек, либо авторасчёт, если пользователь не задавал. */
