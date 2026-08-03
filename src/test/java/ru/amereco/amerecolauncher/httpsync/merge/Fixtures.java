@@ -21,7 +21,20 @@ final class Fixtures {
         }
     }
 
+    /**
+     * Содержимое фикстуры как текст.
+     *
+     * <p>Фикстуры сравниваются побайтово, поэтому git не должен подменять в них переводы
+     * строк — за это отвечает {@code -text} в {@code .gitattributes}. Если правило потеряется,
+     * тесты воспроизведения формата упадут с километровым диффом; лучше сказать прямо.
+     */
     static String text(String name) {
-        return new String(bytes(name), StandardCharsets.UTF_8);
+        String content = new String(bytes(name), StandardCharsets.UTF_8);
+        if (content.indexOf('\r') >= 0) {
+            throw new IllegalStateException("фикстура " + name + " пришла с CRLF: git подменил"
+                    + " переводы строк. Проверьте правило -text в .gitattributes"
+                    + " и перевыньте файл (git rm --cached + checkout).");
+        }
+        return content;
     }
 }

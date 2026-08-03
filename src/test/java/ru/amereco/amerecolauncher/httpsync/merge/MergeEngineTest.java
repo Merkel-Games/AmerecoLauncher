@@ -179,6 +179,20 @@ class MergeEngineTest {
         }
 
         @Test
+        @DisplayName("настоящий конфиг с CRLF сливается без изменений — на Windows они такие")
+        void crlfConfigIsStable() {
+            byte[] lf = Fixtures.bytes("chatplus.json");
+            byte[] crlf = new String(lf, StandardCharsets.UTF_8)
+                    .replace("\n", "\r\n").getBytes(StandardCharsets.UTF_8);
+
+            MergeResult result = MergeEngine.merge(
+                    new MergeInput("config/chatplus/chatplus-v2.5.0.json", crlf, crlf, crlf));
+
+            assertEquals(TextFormat.JSON, result.format(), "CRLF не должен мешать разбору");
+            assertFalse(result.changed(), "файл с CRLF переписан без нужды");
+        }
+
+        @Test
         @DisplayName("оформление локального файла не меняется")
         void stylePreserved() {
             MergeResult result = MergeEngine.merge(new MergeInput("options.txt",
