@@ -79,25 +79,14 @@ public class MainController {
      * Base profile (rpcraft) is always first, then overlays in order.
      */
     private List<String> getActiveProfiles() {
-        List<String> profiles = new ArrayList<>();
-        if (config.features.getOrDefault("profile_rpcraft", true))
-            profiles.add("rpcraft");
-        if (config.features.getOrDefault("profile_rpcraft_admin", false))
-            profiles.add("rpcraft-admin");
-        if (config.features.getOrDefault("profile_rpcraft_ultra", false))
-            profiles.add("rpcraft-ultra");
-        return profiles;
+        return Profiles.active(config);
     }
 
     /**
      * Creates an HTTPSync instance for the given profile name.
      */
     private HTTPSync createSyncForProfile(String profileName) {
-        String baseUrl = "https://amereco.ru/client_dist/instances/" + profileName + "/";
-        String configUrl = "https://amereco.ru/client_dist/instances/" + profileName + "/" + profileName + ".json";
-        Path basePath = Path.of(config.mainDir, "instances/rpcraft/");
-        Path configPath = Path.of(config.mainDir, "instances/rpcraft/" + profileName + ".json");
-        HTTPSync sync = new HTTPSync(configUrl, baseUrl, configPath, basePath, 5000, 3000);
+        HTTPSync sync = Profiles.sync(config, profileName);
         sync.setOnProgress(this::handleProgressUpdate);
         return sync;
     }
@@ -107,15 +96,9 @@ public class MainController {
      * Runs on every checkUpdates, so disabling a profile triggers cleanup immediately.
      */
     private void purgeDisabledProfiles() throws IOException, InterruptedException {
-        List<String> activeProfiles = getActiveProfiles();
-        String[] knownOverlayProfiles = {"rpcraft-admin", "rpcraft-ultra"};
-        for (String overlay : knownOverlayProfiles) {
-            if (!activeProfiles.contains(overlay)) {
-                Path indexFile = Path.of(config.mainDir, "instances/rpcraft/" + overlay + ".json");
-                if (Files.exists(indexFile)) {
-                    HTTPSync sync = createSyncForProfile(overlay);
-                    sync.purge();
-                }
+        for (String overlay : Profiles.overlays()) {
+            if (!Profiles.isActive(config, overlay) && Files.exists(Profiles.indexPath(config, overlay))) {
+                createSyncForProfile(overlay).purge();
             }
         }
     }

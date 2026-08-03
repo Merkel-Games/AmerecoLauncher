@@ -2,11 +2,11 @@ package ru.amereco.amerecolauncher;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.ResourceBundle;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
@@ -24,6 +24,11 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import ru.amereco.amerecolauncher.diag.CrashReporter;
 import ru.amereco.amerecolauncher.minecraft.JvmTuning;
+import ru.amereco.amerecolauncher.minecraft.MinecraftDownloader;
+import ru.amereco.amerecolauncher.minecraft.authlibinjector.AuthlibInjectorDownloader;
+import ru.amereco.amerecolauncher.minecraft.fabric.FabricDownloader;
+import ru.amereco.amerecolauncher.utils.AtomicFiles;
+import ru.amereco.amerecolauncher.utils.Downloader;
 
 /**
  * FXML Controller class
@@ -193,40 +198,137 @@ public class SettingsController implements Initializable {
     @FXML
     private void resetResources() {
         Alert alert = new Alert(Alert.AlertType.WARNING,
-                "Перезагрузить все данные заного?\nВсе файлы будут удалены.",
+                "Перезагрузить все данные заново?\n\n"
+                + "Будет удалено всё, что скачал лаунчер: сборка, моды, конфиги,\n"
+                + "ресурспаки, библиотеки и файлы Minecraft.\n"
+                + "Миры, скриншоты и логи останутся на месте.",
                 ButtonType.YES, ButtonType.NO);
         if (alert.showAndWait().orElse(ButtonType.NO) != ButtonType.YES) {
             return;
         }
 
-        Path dir = Path.of(Config.get().mainDir);
         Thread t = new Thread(() -> {
-            try {
-                deleteRecursively(dir);
-                Platform.runLater(() -> new Alert(Alert.AlertType.INFORMATION,
-                        "Все ресурсы удалены.", ButtonType.OK).showAndWait());
-            } catch (IOException e) {
-                e.printStackTrace();
-                Platform.runLater(() -> new Alert(Alert.AlertType.ERROR,
-                        "Не удалось удалить ресурсы: " + e.getMessage(), ButtonType.OK).showAndWait());
+            IOException failure = null;
+            for (Downloader downloader : allDownloaders()) {
+                try {
+                    downloader.deleteDownloaded();
+                } catch (IOException error) {
+                    // Один загрузчик не смог — остальные всё равно чистим,
+                    // иначе половина сборки осталась бы на диске.
+                    Log.error("Удаление ресурсов: " + downloader.getClass().getSimpleName()
+                            + " не справился", error);
+                    if (failure == null) {
+                        failure = error;
+                    } else {
+                        failure.addSuppressed(error);
+                    }
+                }
             }
+
+            final IOException reported = failure;
+            Platform.runLater(() -> {
+                if (reported == null) {
+                    new Alert(Alert.AlertType.INFORMATION,
+                            "Все скачанные файлы удалены.", ButtonType.OK).showAndWait();
+                } else {
+                    new Alert(Alert.AlertType.ERROR,
+                            "Удалено не всё: " + reported.getMessage(),
+                            ButtonType.OK).showAndWait();
+                }
+            });
         }, "reset-resources");
         t.setDaemon(true);
         t.start();
     }
 
-    private static void deleteRecursively(Path dir) throws IOException {
-        if (!Files.exists(dir)) return;
-        try (var stream = Files.walk(dir)) {
-            stream.sorted(Comparator.reverseOrder()).forEach(p -> {
-                try {
-                    Files.deleteIfExists(p);
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-            });
-        } catch (UncheckedIOException e) {
-            throw e.getCause();
+    /**
+     * Сносит каталог лаунчера целиком, вместе с мирами, скриншотами и логами.
+     *
+     * <p>В отличие от {@link #resetResources()} тут не спрашивают, что откуда взялось:
+     * удаляется всё содержимое {@code mainDir}. Это то, что нужно, когда каталог надо
+     * вернуть в чистое состояние, а не просто перекачать сборку.
+     *
+     * <p>Каталог лаунчера выбирает пользователь, поэтому перед удалением проверяется,
+     * что это не домашний каталог и не корень файловой системы: рекурсивное удаление
+     * по такому пути — не «чистая установка», а потеря всех личных файлов.
+     */
+    @FXML
+    private void wipeGameDirectory() {
+        Path dir = Path.of(Config.get().mainDir).toAbsolutePath().normalize();
+
+        String refusal = refuseToWipe(dir);
+        if (refusal != null) {
+            new Alert(Alert.AlertType.ERROR,
+                    "Не буду удалять " + dir + ":\n" + refusal
+                    + "\n\nУкажите отдельный каталог для игры и повторите.",
+                    ButtonType.OK).showAndWait();
+            return;
         }
+
+        Alert alert = new Alert(Alert.AlertType.WARNING,
+                "Стереть каталог целиком?\n\n" + dir + "\n\n"
+                + "Удалится всё его содержимое, включая миры, скриншоты и логи.\n"
+                + "Это необратимо.",
+                ButtonType.YES, ButtonType.NO);
+        if (alert.showAndWait().orElse(ButtonType.NO) != ButtonType.YES) {
+            return;
+        }
+
+        Thread t = new Thread(() -> {
+            try {
+                AtomicFiles.deleteRecursively(dir);
+                Files.createDirectories(dir);
+                Platform.runLater(() -> new Alert(Alert.AlertType.INFORMATION,
+                        "Каталог очищен.", ButtonType.OK).showAndWait());
+            } catch (IOException error) {
+                Log.error("Полная очистка " + dir + " не удалась", error);
+                Platform.runLater(() -> new Alert(Alert.AlertType.ERROR,
+                        "Не удалось стереть каталог: " + error.getMessage(),
+                        ButtonType.OK).showAndWait());
+            }
+        }, "wipe-game-directory");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * Почему по этому пути нельзя рекурсивно удалять, или {@code null}, если можно.
+     *
+     * <p>Отсекаются только очевидно катастрофические случаи — те, которые никто не имеет
+     * в виду под «стереть каталог игры».
+     */
+    static String refuseToWipe(Path dir) {
+        if (dir.getParent() == null) {
+            return "это корень файловой системы";
+        }
+        Path home = Path.of(System.getProperty("user.home", "")).toAbsolutePath().normalize();
+        if (dir.equals(home)) {
+            return "это ваш домашний каталог";
+        }
+        for (String name : new String[]{"Desktop", "Documents", "Downloads", "Рабочий стол", "Документы", "Загрузки"}) {
+            if (dir.equals(home.resolve(name))) {
+                return "это личный каталог «" + name + "»";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Все загрузчики лаунчера. Каждый знает, что скачал он сам, и удаляет только это —
+     * поэтому каталог лаунчера, который выбирает пользователь, не сносится целиком
+     * вместе с тем, что он мог туда положить.
+     *
+     * <p>Профили берутся все, а не только включённые: у отключённого оверлея файлы
+     * тоже могли остаться.
+     */
+    private List<Downloader> allDownloaders() {
+        List<Downloader> downloaders = new ArrayList<>();
+        downloaders.add(new MinecraftDownloader());
+        downloaders.add(new FabricDownloader());
+        downloaders.add(new AuthlibInjectorDownloader());
+        for (String profile : Profiles.all()) {
+            downloaders.add(Profiles.sync(config, profile));
+        }
+        return downloaders;
     }
 }

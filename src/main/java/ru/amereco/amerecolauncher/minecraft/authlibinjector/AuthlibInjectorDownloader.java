@@ -14,6 +14,7 @@ import java.util.List;
 import ru.amereco.amerecolauncher.Config;
 import ru.amereco.amerecolauncher.utils.Downloader;
 import ru.amereco.amerecolauncher.minecraft.models.Version;
+import java.util.Collection;
 
 /**
  *
@@ -87,5 +88,14 @@ public class AuthlibInjectorDownloader extends Downloader {
         downloadToPathInThread(URI.create(downloadUrl), Path.of(mainDir, "libraries", libraryPath));
 
         waitUntilDownload();
+    }
+
+    /** Authlib-injector: своя библиотека и профиль версии, куда он себя прописывает. */
+    @Override
+    protected Collection<Path> managedPaths() {
+        Path root = mainDir();
+        return List.of(
+                root.resolve("libraries").resolve("moe").resolve("yushi").resolve("authlib-injector"),
+                root.resolve("versions"));
     }
 }

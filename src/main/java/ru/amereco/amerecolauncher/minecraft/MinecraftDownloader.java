@@ -15,6 +15,8 @@ import ru.amereco.amerecolauncher.minecraft.models.Library;
 import ru.amereco.amerecolauncher.minecraft.models.Version;
 import ru.amereco.amerecolauncher.minecraft.models.VersionManifest;
 import ru.amereco.amerecolauncher.minecraft.models.AssetIndex;
+import java.util.Collection;
+import java.util.List;
 
 /**
  *
@@ -150,5 +152,19 @@ public class MinecraftDownloader extends Downloader {
 
     private static String archBits() {
         return System.getProperty("os.arch", "").contains("64") ? "64" : "32";
+    }
+
+    /**
+     * Ванильный загрузчик владеет всей игровой раскладкой: профили версий, ресурсы,
+     * библиотеки и распакованные нативные библиотеки.
+     */
+    @Override
+    protected Collection<Path> managedPaths() {
+        Path root = mainDir();
+        return List.of(
+                root.resolve("versions"),
+                root.resolve("assets"),
+                root.resolve("libraries"),
+                root.resolve("natives"));
     }
 }

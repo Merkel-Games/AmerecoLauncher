@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>ru.amereco</groupId>
     <artifactId>AmerecoLauncher</artifactId>
-    <version>1.3.0</version>
+    <version>1.4.0</version>
     <name>Amereco Launcher</name>
     <organization>
         <name>Amereco Minecraft Server</name>
@@ -115,6 +115,14 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.0.0-M7</version>
+                <configuration>
+                    <!--
+                        Тесты гоняем по classpath, а не по module path. С module-info.java в проекте
+                        surefire иначе положил бы junit/mockito/wiremock автоматическими модулями и
+                        упал бы на readability. На поставляемый артефакт это не влияет.
+                    -->
+                    <useModulePath>false</useModulePath>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

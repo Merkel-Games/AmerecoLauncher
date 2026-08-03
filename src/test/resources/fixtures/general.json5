@@ -1,0 +1,85 @@
+{
+	"enabled": true,
+	"serverEntries": [
+		{
+			"maptype": "Bluemap",
+			"ip": "amereco.ru",
+			"link": "https://amereco.ru/map/",
+			"markerVisibilityMode": "All",
+			"markerLayers": [
+				"example-marker-set",
+				"logos_Main",
+				"002_Main",
+				"001_Main",
+				"004_Main",
+				"003_Main"
+			],
+			"individualMarkerMode": "BlackList",
+			"markers": [],
+			"areaMarkerVisibilityMode": "All",
+			"areaMarkerLayers": [
+				"example-marker-set",
+				"logos_Main",
+				"002_Main",
+				"001_Main",
+				"004_Main",
+				"003_Main"
+			],
+			"individualAreaMarkerMode": "BlackList",
+			"areaMarkers": [],
+			"iconMarkerVisibilityMode": "All",
+			"iconMarkerLayers": [
+				"example-marker-set",
+				"logos_Main",
+				"002_Main",
+				"001_Main",
+				"004_Main",
+				"003_Main"
+			],
+			"individualIconMode": "BlackList",
+			"icons": [],
+			"dimensionMapping": {
+				"minecraft:overworld": [
+					"rpcraft_map"
+				]
+			}
+		}
+	],
+	"maxUpdateDelay": 2000,
+	"defaultY": 64,
+	"minimapWaypointsRenderBelow": "WHEN_PLAYER_LIST_SHOWN",
+	"enablePlayerWaypoints": true,
+	"showPlayerWaypointsAsTrackedPlayers": true,
+	"interpolationTime": 100,
+	"enablePlayerIconWaypoints": true,
+	"useMcHeadsPlayerNameIcons": false,
+	"playerWaypointColor": "Black",
+	"showAfkInTabList": true,
+	"timeUntilAfk": 120,
+	"showAfkTimeInTabList": true,
+	"hideAfkMinutes": false,
+	"AfkColor": 16733440,
+	"unknownAfkStateColor": 6316128,
+	"enableMarkerWaypoints": true,
+	"enableMarkerIcons": true,
+	"showDefaultMarkerIcons": true,
+	"markerWaypointColor": "Gray",
+	"enableAreaMarkerOverlay": true,
+	"areaFillAlphaMul": 100,
+	"areaFillAlphaMin": 0,
+	"areaFillAlphaMax": 42,
+	"areaLineAlphaMul": 100,
+	"areaLineAlphaMin": 0,
+	"areaLineAlphaMax": 100,
+	"blocksPerChunkThreshold": 128,
+	"maxChunkArea": 500000,
+	"excludeOPAC": true,
+	"ignoredServers": [],
+	"ignoreMarkerMessage": true,
+	"hideAllChatErrors": false,
+	"invisibilityRecovery": true,
+	"debugMode": false,
+	"chatLogInDebugMode": false,
+	"ignoreCertificatesUseAtYourOwnRisk": false,
+	"configVersionDoNotEdit": 2
+}

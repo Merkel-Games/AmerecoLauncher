@@ -20,12 +20,14 @@ import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.Collection;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import ru.amereco.amerecolauncher.Config;
+import ru.amereco.amerecolauncher.Log;
 
 /**
  *
@@ -61,6 +63,78 @@ public abstract class Downloader extends ProgressSupplier {
     public abstract boolean checkUpdates(String versionId) throws IOException, InterruptedException;
     public abstract void download() throws IOException, InterruptedException;
     public abstract void download(String versionId) throws IOException, InterruptedException;
+
+    /**
+     * Пути, которые этот загрузчик создаёт на диске: файлы или каталоги целиком.
+     *
+     * <p>Кто умеет скачивать — тот знает и куда кладёт, а значит только он и может
+     * сказать, что потом удалять. Возвращать полагается ровно то, что появилось из
+     * сети: миры, скриншоты и логи игрока сюда не входят.
+     *
+     * <p>Пересечения между загрузчиками допустимы — удаление идемпотентно.
+     */
+    protected abstract Collection<Path> managedPaths() throws IOException;
+
+    /** Корень, куда лаунчер складывает всё скачанное. */
+    protected Path mainDir() {
+        return Path.of(config.mainDir).toAbsolutePath().normalize();
+    }
+
+    /**
+     * Граница, за которую {@link #deleteDownloaded()} не выйдет.
+     *
+     * <p>По умолчанию — {@link #mainDir()}. Загрузчик, работающий в своём подкаталоге,
+     * должен сузить её до него.
+     */
+    protected Path deletionRoot() {
+        return mainDir();
+    }
+
+    /**
+     * Удаляет всё, что этот загрузчик скачал.
+     *
+     * <p>Удаляются только пути из {@link #managedPaths()} и только внутри
+     * {@link #deletionRoot()}. Сам корень не трогается никогда: каталог лаунчера
+     * выбирает пользователь, и рекурсивное удаление по этому пути целиком снесло бы
+     * всё, что он туда положил помимо игры.
+     *
+     * <p>Сбой на одном пути не прерывает остальные — иначе один занятый файл оставлял бы
+     * половину сборки на диске. Первая ошибка возбуждается в конце, остальные к ней
+     * подшиваются.
+     */
+    public void deleteDownloaded() throws IOException {
+        Path root = deletionRoot();
+        Collection<Path> paths = managedPaths();
+
+        updateStage("Удаление скачанных файлов...");
+        resetProgress(paths.size());
+
+        IOException failure = null;
+        for (Path path : paths) {
+            Path target = path.toAbsolutePath().normalize();
+            updateStepAndIncProgress(target.toString());
+
+            if (target.equals(root) || !target.startsWith(root)) {
+                // Страховка от ошибки в managedPaths(): за пределы своего корня не выходим.
+                Log.error("Удаление: путь " + target + " вне " + root + " — пропущен", null);
+                continue;
+            }
+            try {
+                AtomicFiles.deleteRecursively(target);
+            } catch (IOException error) {
+                if (failure == null) {
+                    failure = error;
+                } else {
+                    failure.addSuppressed(error);
+                }
+            }
+        }
+
+        if (failure != null) {
+            throw failure;
+        }
+        updateStage("Скачанные файлы удалены");
+    }
 
     protected String httpGet(URI url) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder()
@@ -147,12 +221,12 @@ public abstract class Downloader extends ProgressSupplier {
         executor().submit(() -> {
             try {
                 downloadToPath(url, path, sha1, size);
-                javafx.application.Platform.runLater(() -> updateStepAndIncProgress(path.toString()));
+                Fx.runLater(() -> updateStepAndIncProgress(path.toString()));
             } catch (Exception exc) {
                 // Запоминаем первый сбой, чтобы waitUntilDownload() его пробросил
                 // (не глушим ошибку — download() не должен «успешно» завершиться с битыми файлами).
                 firstFailure.compareAndSet(null, exc);
-                javafx.application.Platform.runLater(() -> {
+                Fx.runLater(() -> {
                     if (failDownloadHandler != null)
                         failDownloadHandler.accept(exc);
                 });

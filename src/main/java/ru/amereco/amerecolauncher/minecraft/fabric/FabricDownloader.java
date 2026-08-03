@@ -18,6 +18,7 @@ import ru.amereco.amerecolauncher.utils.Downloader;
 import ru.amereco.amerecolauncher.minecraft.fabric.models.FabricMeta;
 import ru.amereco.amerecolauncher.minecraft.models.Library;
 import ru.amereco.amerecolauncher.minecraft.models.Version;
+import java.util.Collection;
 
 /**
  *
@@ -167,5 +168,16 @@ public class FabricDownloader extends Downloader {
         }
 
         waitUntilDownload();
+    }
+
+    /**
+     * Fabric кладёт свой профиль версии и джарники в те же каталоги, что и ванильный
+     * загрузчик. Пересечение намеренное: удаление идемпотентно, а точный список путей
+     * без обращения к сети всё равно не построить.
+     */
+    @Override
+    protected Collection<Path> managedPaths() {
+        Path root = mainDir();
+        return List.of(root.resolve("versions"), root.resolve("libraries"));
     }
 }

@@ -9,11 +9,19 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Files;
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
 import org.json.JSONObject;
 import org.json.JSONArray;
+import ru.amereco.amerecolauncher.Log;
+import ru.amereco.amerecolauncher.httpsync.merge.MergeEngine;
+import ru.amereco.amerecolauncher.httpsync.merge.MergeInput;
+import ru.amereco.amerecolauncher.httpsync.merge.MergeResult;
+import ru.amereco.amerecolauncher.utils.AtomicFiles;
 import ru.amereco.amerecolauncher.utils.Downloader;
+import ru.amereco.amerecolauncher.utils.Hashes;
 
 public class HTTPSync extends Downloader {
     private final String configURL;
@@ -23,10 +31,18 @@ public class HTTPSync extends Downloader {
     private final int timeout;
     private final int retryDelay;
 
+    private final MergeState mergeState;
+    private final SyncPlanner planner;
     private final HttpClient httpClient;
 
     public HTTPSync(String configURL, String baseURL, Path configPath, Path basePath,
                    int timeout, int retryDelay) {
+        this(configURL, baseURL, configPath, basePath, timeout, retryDelay,
+                profileNameOf(configPath));
+    }
+
+    public HTTPSync(String configURL, String baseURL, Path configPath, Path basePath,
+                   int timeout, int retryDelay, String profileName) {
         this.configURL = configURL;
         this.baseURL = baseURL;
         this.configPath = configPath;
@@ -34,10 +50,19 @@ public class HTTPSync extends Downloader {
         this.timeout = timeout;
         this.retryDelay = retryDelay;
 
+        this.mergeState = new MergeState(basePath.resolve(MergeState.DIR_NAME), profileName);
+        this.planner = new SyncPlanner(basePath, configPath, mergeState);
+
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(java.time.Duration.ofMillis(timeout))
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
+    }
+
+    /** Имя профиля — это имя файла индекса без {@code .json}. */
+    private static String profileNameOf(Path configPath) {
+        String name = configPath.getFileName().toString();
+        return name.endsWith(".json") ? name.substring(0, name.length() - ".json".length()) : name;
     }
 
     @Override
@@ -62,7 +87,7 @@ public class HTTPSync extends Downloader {
         return checkUpdates();
     }
 
-    private JSONObject getLocalConfig(Path path) throws IOException, InterruptedException {
+    private JSONObject getLocalConfig(Path path) throws IOException {
         if (Files.exists(path)) {
             String content = Files.readString(path);
             return new JSONObject(content);
@@ -91,24 +116,6 @@ public class HTTPSync extends Downloader {
         return new JSONObject(response.body());
     }
 
-    private static JSONArray filesOf(JSONObject config) {
-        JSONArray files = config.optJSONArray("files");
-        return files != null ? files : new JSONArray();
-    }
-
-    /**
-     * Резолвит путь из удалённого индекса в локальный, гарантируя, что он остаётся
-     * внутри basePath (защита от path traversal: "../..", абсолютные пути).
-     */
-    private Path resolveSafe(String relative) throws IOException {
-        Path root = basePath.toAbsolutePath().normalize();
-        Path target = root.resolve(relative).normalize();
-        if (!target.startsWith(root)) {
-            throw new IOException("path traversal blocked: " + relative);
-        }
-        return target;
-    }
-
     @Override
     public void download() throws IOException, InterruptedException {
         synchronize();
@@ -126,98 +133,225 @@ public class HTTPSync extends Downloader {
                 t.printStackTrace();
                 updateStage("Ошибка скачивания HTTPSync");
                 updateStep(t.getMessage());
+                // Индекс сбрасывается, чтобы следующий запуск начал заново. Эталонные снимки
+                // при этом намеренно остаются: они переживают сбой и не дают следующему
+                // слиянию скатиться до двустороннего.
                 Files.deleteIfExists(configPath);
             } catch (Exception exc) {
             }
         }));
-        Map<String, String> fileActions = getFileActions();
+
+        mergeState.clearStaging();
+        List<PlannedFile> plan = planner.plan(getFileActions());
         try {
-            performFileActions(fileActions);
+            performFileActions(plan);
             waitUntilDownload();
+            performMerges(plan);
             updateConfig();
         } finally {
-            fileActions.clear();
+            mergeState.clearStaging();
         }
         waitUntilDownload();
         updateStage("Обновления загружены");
     }
 
-    private Map<String, String> getFileActions() throws IOException, InterruptedException {
+    private List<FileAction> getFileActions() throws IOException, InterruptedException {
         updateStage("Загрузка конфигов в память");
 
         JSONObject remoteConfig = getConfig(configURL);
         JSONObject localConfig = getLocalConfig(configPath);
 
-        JSONArray remoteFiles = filesOf(remoteConfig);
-        JSONArray localFiles = filesOf(localConfig);
-
-        Map<String, String> actions = new HashMap<>();
-
-        updateStage("Вычисление разницы файлов: Пометка файлов");
-        resetProgress(remoteFiles.length() + localFiles.length());
-
-        // Mark local files for deletion
-        for (int i = 0; i < localFiles.length(); i++) {
-            JSONObject file = localFiles.getJSONObject(i);
-            String path = file.getString("path");
-            updateStepAndIncProgress(path);
-            actions.put(path, "D");
-        }
-
-        updateStage("Вычисление разницы файлов: Сравнение");
-        for (int i = 0; i < remoteFiles.length(); i++) {
-            JSONObject remoteFile = remoteFiles.getJSONObject(i);
-            String path = remoteFile.getString("path");
-            updateStepAndIncProgress(path);
-
-            boolean found = false;
-            for (int j = 0; j < localFiles.length(); j++) {
-                JSONObject localFile = localFiles.getJSONObject(j);
-                if (path.equals(localFile.getString("path"))) {
-                    found = true;
-                    if (!remoteFile.getString("hash").equals(localFile.getString("hash"))) {
-                        actions.put(path, "U");
-                    } else {
-                        actions.remove(path);
-                    }
-                    break;
-                }
+        return planner.actions(remoteConfig, localConfig, new SyncPlanner.Progress() {
+            @Override
+            public void stage(String stage) {
+                updateStage(stage);
             }
 
-            if (!found) {
-                actions.put(path, "C");
+            @Override
+            public void reset(int total) {
+                resetProgress(total);
             }
-        }
 
-        updateStage("Сравнение окончено");
-        return actions;
+            @Override
+            public void step(String step) {
+                updateStepAndIncProgress(step);
+            }
+        });
     }
 
-    private void performFileActions(Map<String, String> actions) throws IOException, InterruptedException {
+    private void performFileActions(List<PlannedFile> plan) throws IOException, InterruptedException {
         updateStage("Синхронизация");
-        resetProgress(actions.size());
+        resetProgress(plan.size());
 
-        for (Map.Entry<String, String> entry : actions.entrySet()) {
-            updateStep(entry.getKey());
-            String action = entry.getValue();
-            Path target = resolveSafe(entry.getKey());
+        for (PlannedFile planned : plan) {
+            String path = planned.action().path();
+            updateStep(path);
 
-            if (action.equals("C") || action.equals("U")) {
-                String remoteUrl = baseURL + URLEncoderChromium.encode(entry.getKey());
-                Path dirPath = target.getParent();
-                if (dirPath != null && !Files.exists(dirPath)) {
-                    Files.createDirectories(dirPath);
-                }
-                downloadFile(remoteUrl, target.toString());
-            } else if (action.equals("D")) {
-                Files.deleteIfExists(target);
-                updateStepAndIncProgress(entry.getKey());
+            switch (planned.plan()) {
+                case WRITE_DIRECT:
+                case WRITE_WITH_BASE:
+                    // Прогресс по таким файлам тикает пул после завершения загрузки.
+                    downloadFile(remoteUrlOf(path), ensureParent(planned.target()));
+                    break;
+
+                case STAGE_FOR_MERGE:
+                case BACKFILL_BASE:
+                    downloadFile(remoteUrlOf(path), ensureParent(planned.staging()));
+                    break;
+
+                case SEED_BASE_FROM_LOCAL:
+                    mergeState.writeBase(path, Files.readAllBytes(planned.target()));
+                    updateStepAndIncProgress(path);
+                    break;
+
+                case DELETE:
+                    Files.deleteIfExists(planned.target());
+                    mergeState.deleteBase(path);
+                    Files.deleteIfExists(MergeState.conflictSibling(planned.target()));
+                    updateStepAndIncProgress(path);
+                    break;
+
+                case KEEP_LOCAL:
+                    mergeState.deleteBase(path);
+                    Log.info("Слияние: " + path
+                            + " — изменён вами, файл оставлен, хотя убран с сервера");
+                    updateStepAndIncProgress("Оставлен изменённый файл: " + path);
+                    break;
+
+                case NOOP:
+                default:
+                    updateStepAndIncProgress(path);
+                    break;
             }
         }
     }
 
-    private void downloadFile(String url, String outputPath) {
-        downloadToPathInThread(URI.create(url), Path.of(outputPath));
+    /**
+     * Слияние. Выполняется на вызывающем потоке уже после того, как все загрузки завершились,
+     * и до обновления индекса: сбой на этом шаге оставляет индекс прежним, и следующий запуск
+     * повторит синхронизацию.
+     */
+    private void performMerges(List<PlannedFile> plan) throws IOException, InterruptedException {
+        List<PlannedFile> pending = new ArrayList<>();
+        for (PlannedFile planned : plan) {
+            if (planned.plan() == PlannedFile.Plan.STAGE_FOR_MERGE
+                    || planned.plan() == PlannedFile.Plan.WRITE_WITH_BASE
+                    || planned.plan() == PlannedFile.Plan.BACKFILL_BASE) {
+                pending.add(planned);
+            }
+        }
+        if (pending.isEmpty()) {
+            return;
+        }
+
+        updateStage("Объединение изменений...");
+        resetProgress(pending.size());
+
+        for (PlannedFile planned : pending) {
+            String path = planned.action().path();
+            updateStep(path);
+            try {
+                switch (planned.plan()) {
+                    case WRITE_WITH_BASE:
+                        // Целевой файл только что заменён серверным — с него и снимаем эталон.
+                        mergeState.writeBase(path, Files.readAllBytes(planned.target()));
+                        break;
+                    case BACKFILL_BASE:
+                        mergeState.writeBase(path, Files.readAllBytes(planned.staging()));
+                        break;
+                    default:
+                        mergeOne(planned);
+                        break;
+                }
+            } catch (IOException | RuntimeException failure) {
+                keepLocalAfterFailure(planned, failure);
+            }
+            updateStepAndIncProgress(path);
+        }
+    }
+
+    private void mergeOne(PlannedFile planned) throws IOException {
+        String path = planned.action().path();
+        byte[] remote = Files.readAllBytes(planned.staging());
+
+        // Первая в проекте проверка целостности загрузки. Здесь она дешёвая: сливаемые файлы
+        // измеряются килобайтами, а слить битый файл в конфиг игрока — необратимо.
+        String actual = Hashes.md5(remote);
+        if (!actual.equalsIgnoreCase(planned.action().remoteHash())) {
+            throw new IOException("MD5 mismatch for " + path
+                    + ": expected " + planned.action().remoteHash() + ", got " + actual);
+        }
+
+        byte[] local = Files.readAllBytes(planned.target());
+        byte[] base = mergeState.readBase(path);
+
+        MergeResult result = MergeEngine.merge(new MergeInput(path, base, local, remote));
+
+        if (!result.mergeable()) {
+            // Пометка merge на двоичном файле — ошибка на сервере. Заморозить локальную копию
+            // навсегда хуже, чем вернуться к сегодняшнему поведению: полной замене.
+            Log.error("Слияние: " + path + " — не поддаётся объединению ("
+                    + result.reason() + "), применена полная замена", null);
+            updateStep("Полная замена: " + path);
+            AtomicFiles.write(planned.target(), remote);
+        } else {
+            if (result.changed()) {
+                AtomicFiles.write(planned.target(), result.content());
+            }
+            if (result.hasConflicts()) {
+                if (!Arrays.equals(result.content(), remote)) {
+                    AtomicFiles.write(MergeState.conflictSibling(planned.target()), remote);
+                }
+                updateStep("Конфликт в " + path
+                        + " — сохранена ваша версия, серверная рядом (.new)");
+                Log.info("Слияние: " + path + " — конфликтов: " + result.conflicts().size()
+                        + " (ваши значения сохранены), серверная версия: " + path + ".new; "
+                        + String.join(", ", result.conflicts()));
+            } else {
+                Log.info("Слияние: " + path + " — "
+                        + (result.threeWay() ? "трёхстороннее" : "двустороннее (эталон отсутствует)")
+                        + ", перенесено изменений: " + result.applied() + ", конфликтов нет");
+            }
+        }
+
+        mergeState.writeBase(path, remote);
+    }
+
+    /**
+     * Локальный файл не читается или разбор сорвался. Ничего не трогаем, серверную версию
+     * кладём рядом и фиксируем её эталоном — иначе попытка повторялась бы при каждом запуске.
+     */
+    private void keepLocalAfterFailure(PlannedFile planned, Exception failure) {
+        String path = planned.action().path();
+        Log.error("Слияние: " + path + " — не удалось ("
+                + failure.getMessage() + "), локальный файл оставлен без изменений", failure);
+        updateStep("Не удалось объединить " + path + " — файл оставлен как есть");
+        try {
+            if (Files.isRegularFile(planned.staging())) {
+                byte[] remote = Files.readAllBytes(planned.staging());
+                AtomicFiles.write(MergeState.conflictSibling(planned.target()), remote);
+                mergeState.writeBase(path, remote);
+            }
+        } catch (IOException unrecoverable) {
+            Log.error("Слияние: " + path + " — не удалось сохранить серверную версию рядом",
+                    unrecoverable);
+        }
+    }
+
+    private String remoteUrlOf(String path) {
+        return baseURL + URLEncoderChromium.encode(path);
+    }
+
+    private static Path ensureParent(Path target) throws IOException {
+        Path parent = target.getParent();
+        if (parent != null && !Files.exists(parent)) {
+            Files.createDirectories(parent);
+        }
+        return target;
+    }
+
+    private void downloadFile(String url, Path outputPath) {
+        downloadToPathInThread(URI.create(url), outputPath);
     }
 
     private void updateConfig() throws IOException {
@@ -225,27 +359,70 @@ public class HTTPSync extends Downloader {
         if (configDir != null && !Files.exists(configDir)) {
             Files.createDirectories(configDir);
         }
-        downloadFile(configURL, configPath.toString());
+        downloadFile(configURL, configPath);
     }
 
     /**
-     * Purges all files listed in the local index and deletes the index file itself.
-     * Used when a profile is disabled — removes its overlay files without network access.
+     * Удаляет файлы отключённого профиля по локальному индексу вместе с состоянием слияния.
+     *
+     * <p>Файлы в режиме {@link SyncMode#MERGE}, которые игрок успел изменить, остаются на диске:
+     * после правки это его данные — набор клавиш, настройки миникарты, — и стирать их при
+     * отключении оверлея значит ровно ту потерю, ради предотвращения которой всё и затевалось.
      */
     public void purge() throws IOException, InterruptedException {
         updateStage("Очистка файлов отключённого профиля...");
         JSONObject localConfig = getLocalConfig(configPath);
-        JSONArray files = filesOf(localConfig);
+        JSONArray files = SyncPlanner.filesOf(localConfig);
         int total = files.length();
         resetProgress(total);
         for (int i = 0; i < total; i++) {
             JSONObject file = files.getJSONObject(i);
             String path = file.getString("path");
             updateStepAndIncProgress(path);
-            Files.deleteIfExists(resolveSafe(path));
+
+            Path target = planner.resolveSafe(path);
+            SyncMode mode = SyncMode.parse(file.optString("mode", null));
+            if (mode == SyncMode.MERGE
+                    && SyncPlanner.isLocallyModified(target, file.optString("hash", null))) {
+                Log.info("Слияние: " + path
+                        + " — изменён вами, файл оставлен при отключении профиля");
+                continue;
+            }
+            Files.deleteIfExists(target);
         }
+        mergeState.purgeAll();
         Files.deleteIfExists(configPath);
         updateStage("Файлы профиля удалены");
+    }
+
+    /**
+     * Файлы этого профиля по локальному индексу: сами файлы, серверные версии,
+     * оставшиеся рядом после конфликтов, сам индекс и состояние слияния.
+     *
+     * <p>Всё это и есть скачанное. Миры, скриншоты, логи и шейдерпаки игрока в индексе
+     * не значатся и потому здесь не появляются.
+     *
+     * <p>Индекс — единственный источник знания о том, что было скачано. Если его нет,
+     * список пуст: удалять вслепую весь каталог инстанса нельзя, там лежат сохранения.
+     */
+    @Override
+    protected Collection<Path> managedPaths() throws IOException {
+        List<Path> paths = new ArrayList<>();
+        JSONArray files = SyncPlanner.filesOf(getLocalConfig(configPath));
+        for (int i = 0; i < files.length(); i++) {
+            Path target = planner.resolveSafe(files.getJSONObject(i).getString("path"));
+            paths.add(target);
+            paths.add(MergeState.conflictSibling(target));
+        }
+        paths.add(configPath);
+        paths.addAll(mergeState.stateRoots());
+        return paths;
+    }
+
+    /** Профиль работает внутри каталога инстанса и за его пределы не удаляет. */
+    @Override
+    protected Path deletionRoot() {
+        return basePath.toAbsolutePath().normalize();
     }
 
     public int getRetryDelay() {

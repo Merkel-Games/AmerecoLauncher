@@ -73,6 +73,11 @@
                          <Font name="Public Pixel" size="15.0" />
                       </font>
                    </Button>
+                   <Button mnemonicParsing="false" onAction="#wipeGameDirectory" prefHeight="30.0" prefWidth="500.0" style="-fx-font-size: 15;" styleClass="ninetile-button" text="Стереть всё, включая миры" textFill="WHITE">
+                      <font>
+                         <Font name="Public Pixel" size="15.0" />
+                      </font>
+                   </Button>
                    <CheckBox fx:id="quickPlayCheckbox" mnemonicParsing="false" prefWidth="500.0" text="Автоподключение к серверу" textFill="WHITE" />
                   <Label text="Профили" textFill="WHITE">
                      <VBox.margin>

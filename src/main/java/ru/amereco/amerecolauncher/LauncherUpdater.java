@@ -20,6 +20,8 @@ import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -196,6 +198,19 @@ public class LauncherUpdater extends Downloader {
     @Override
     public boolean checkUpdates(String versionId) throws IOException, InterruptedException {
         return checkUpdates();
+    }
+
+    /**
+     * Ничего. Установщик новой версии лаунчера скачивается во временный каталог
+     * системы ({@code amereco-update-*}), а не в каталог игры, и убирается сам —
+     * см. {@link #purgeStaleTempDirs()}.
+     *
+     * <p>Поэтому удаление игровых ресурсов его не касается: снести наполовину
+     * скачанное обновление лаунчера значило бы сломать текущее самообновление.
+     */
+    @Override
+    protected Collection<Path> managedPaths() {
+        return List.of();
     }
 
     /**
