@@ -99,7 +99,10 @@ jobs:
 
   release:
     needs: [build-jar, build-packages]
-    if: always()
+    # Публикуем только когда собрались ВСЕ платформы. С `always()` упавшая сборка
+    # под одну ОС всё равно давала релиз — а он становится `latest`, и лаунчер на
+    # этой ОС переставал обновляться: своего ассета в релизе он не находит.
+    # Именно так вышел неполный v1.4.0 без .exe и .msi.
     runs-on: ubuntu-latest
     steps:
       - name: Download Artifacts

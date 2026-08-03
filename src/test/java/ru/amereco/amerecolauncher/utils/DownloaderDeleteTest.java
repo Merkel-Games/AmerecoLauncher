@@ -62,13 +62,27 @@ class DownloaderDeleteTest {
         }
     }
 
+    /** Права POSIX есть не везде: на Windows их снятие бросает UnsupportedOperationException. */
+    private static boolean posixSupported() {
+        return java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
+    }
+
+    private static void setPermissions(Path dir, Set<PosixFilePermission> permissions) throws IOException {
+        Files.setPosixFilePermissions(dir, permissions);
+    }
+
+    private static final Set<PosixFilePermission> READ_ONLY_DIR = Set.of(
+            PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_EXECUTE);
+
+    private static final Set<PosixFilePermission> WRITABLE_DIR = Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.OWNER_EXECUTE);
+
     @AfterEach
     void unlock() throws IOException {
-        if (locked != null && Files.isDirectory(locked)) {
-            Files.setPosixFilePermissions(locked, Set.of(
-                    PosixFilePermission.OWNER_READ,
-                    PosixFilePermission.OWNER_WRITE,
-                    PosixFilePermission.OWNER_EXECUTE));
+        if (posixSupported() && locked != null && Files.isDirectory(locked)) {
+            setPermissions(locked, WRITABLE_DIR);
         }
     }
 
@@ -127,11 +141,12 @@ class DownloaderDeleteTest {
     @Test
     @DisplayName("сбой на одном пути не отменяет остальные")
     void continuesAfterFailure() throws IOException {
+        Assumptions.assumeTrue(posixSupported(), "нужны права POSIX, чтобы запереть каталог");
+
         Path deletable = file("assets/objects/x");
         locked = root.resolve("versions");
         file("versions/заперто.json");
-        Files.setPosixFilePermissions(locked, Set.of(
-                PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_EXECUTE));
+        setPermissions(locked, READ_ONLY_DIR);
 
         Fake fake = new Fake(root, List.of(locked, root.resolve("assets")));
         boolean threw;
@@ -150,16 +165,16 @@ class DownloaderDeleteTest {
     @Test
     @DisplayName("первая ошибка возбуждается, остальные подшиваются к ней")
     void aggregatesFailures() throws IOException {
+        Assumptions.assumeTrue(posixSupported(), "нужны права POSIX, чтобы запереть каталог");
+
         locked = root.resolve("versions");
         file("versions/заперто.json");
-        Files.setPosixFilePermissions(locked, Set.of(
-                PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_EXECUTE));
+        setPermissions(locked, READ_ONLY_DIR);
 
         Path second = root.resolve("libraries");
         Files.createDirectories(second);
         Files.writeString(second.resolve("тоже.jar"), "x");
-        Files.setPosixFilePermissions(second, Set.of(
-                PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_EXECUTE));
+        setPermissions(second, READ_ONLY_DIR);
 
         try {
             Fake fake = new Fake(root, List.of(locked, second));
@@ -172,10 +187,7 @@ class DownloaderDeleteTest {
             Assumptions.assumeTrue(error != null, "тест осмыслен только без прав суперпользователя");
             assertTrue(error.getSuppressed().length >= 1, "вторая ошибка должна быть подшита к первой");
         } finally {
-            Files.setPosixFilePermissions(second, Set.of(
-                    PosixFilePermission.OWNER_READ,
-                    PosixFilePermission.OWNER_WRITE,
-                    PosixFilePermission.OWNER_EXECUTE));
+            setPermissions(second, WRITABLE_DIR);
         }
     }
 
