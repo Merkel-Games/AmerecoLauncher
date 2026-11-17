@@ -334,7 +334,37 @@
                                     </winConfig>
                                     <macConfig>
                                         <icnsFile>${basedir}/assets/AmerecoLauncher.icns</icnsFile>
+                                        <!-- Свои стаб и Info.plist: штатный Info.plist кладёт путь к JRE
+                                             в LSEnvironment, а с ним новые macOS не открывают .app
+                                             (`open` → ошибка -54). Подробности в самих файлах. -->
+                                        <customLauncher>${basedir}/assets/mac/universalJavaApplicationStub</customLauncher>
+                                        <customInfoPlist>${project.build.directory}/mac/Info.plist</customInfoPlist>
                                     </macConfig>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <!-- Подставляет версию в assets/mac/Info.plist до того, как javapackager его заберёт. -->
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>filter-mac-info-plist</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>copy-resources</goal>
+                                </goals>
+                                <configuration>
+                                    <outputDirectory>${project.build.directory}/mac</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <directory>${basedir}/assets/mac</directory>
+                                            <includes>
+                                                <include>Info.plist</include>
+                                            </includes>
+                                            <filtering>true</filtering>
+                                        </resource>
+                                    </resources>
                                 </configuration>
                             </execution>
                         </executions>

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Info.plist для macOS-сборки (macConfig.customInfoPlist в pom.xml).
+
+    Это копия того, что генерирует JavaPackager, но БЕЗ ключа LSEnvironment.
+    С LSEnvironment новые macOS не открывают приложение вообще: Finder молчит,
+    `open` отвечает ошибкой -54. Путь к встроенной JRE теперь находит сам
+    стаб (assets/mac/universalJavaApplicationStub).
+
+    Версии подставляет Maven (filtering) в фазе prepare-package.
+-->
+<plist version="1.0">
+    <dict>
+        <key>CFBundleGetInfoString</key>
+        <string>Amereco Launcher ${project.version}</string>
+        <key>CFBundleDevelopmentRegion</key>
+        <string>English</string>
+        <key>CFBundleExecutable</key>
+        <string>universalJavaApplicationStub</string>
+        <key>CFBundleIconFile</key>
+        <string>AmerecoLauncher.icns</string>
+        <key>CFBundleIdentifier</key>
+        <string>ru.amereco.amerecolauncher.Main</string>
+        <key>CFBundleDisplayName</key>
+        <string>Amereco Launcher</string>
+        <key>CFBundleInfoDictionaryVersion</key>
+        <string>6.0</string>
+        <key>CFBundleName</key>
+        <string>Amereco Launcher</string>
+        <key>CFBundlePackageType</key>
+        <string>BNDL</string>
+        <key>CFBundleShortVersionString</key>
+        <string>${project.version}</string>
+        <key>CFBundleSignature</key>
+        <string>????</string>
+        <key>CFBundleVersion</key>
+        <string>${project.version}</string>
+        <key>NSHumanReadableCopyright</key>
+        <string>${project.organization.name}</string>
+        <key>NSHighResolutionCapable</key>
+        <true/>
+        <key>NSSupportsAutomaticGraphicsSwitching</key>
+        <true/>
+        <key>AdministratorRequired</key>
+        <false/>
+        <key>JavaX</key>
+        <dict>
+            <key>MainClass</key>
+            <string>${mainClass}</string>
+            <key>ClassPath</key>
+            <array>
+                <string>Java/${project.artifactId}-${project.version}-runnable.jar</string>
+            </array>
+            <key>WorkingDirectory</key>
+            <string>$APP_PACKAGE/Contents/Resources</string>
+            <key>JVMOptionsFile</key>
+            <string>$APP_PACKAGE/Contents/Resources/AmerecoLauncher.l4j.ini</string>
+            <key>RelocateJar</key>
+            <true/>
+        </dict>
+        <key>NSAppleEventsUsageDescription</key>
+        <string>There was an error while launching the application. Please
+			click OK to display a dialog with more information or cancel and view
+			the syslog for details.</string>
+    </dict>
+</plist>
